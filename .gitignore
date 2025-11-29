@@ -1,0 +1,56 @@
+# --- Python Basics ---
+# فایل‌های کامپایل شده پایتون که نباید آپلود شوند
+__pycache__/
+*.py[cod]
+*$py.class
+
+# --- Virtual Environments ---
+# پوشه‌های محیط مجازی (Virtual Environment)
+# اسم‌های رایج محیط مجازی را اینجا آورده‌ام
+venv/
+env/
+.venv/
+.env/
+
+# --- Environment Variables & Secrets (VERY IMPORTANT) ---
+# فایل‌هایی که توکن‌ها و رمزها را در آن ذخیره می‌کنی
+# هرگز نباید این فایل‌ها را کامیت کنی
+.env
+.env.local
+#config.py
+secrets.py
+key.pem
+*.key
+
+# --- Static & Media Files ---
+# اگر فایل‌های استاتیک یا مدیا داری که نباید در گیت باشند
+staticfiles/
+media/
+.uploads/
+uploads/
+uploads/*
+uploads
+
+
+# --- Database ---
+# اگر دیتابیس لوکال داری (مثل SQLite) که دیتای واقعی کاربران توش هست
+*.sqlite3
+*.db
+*.db-journal
+
+# --- Logs ---
+# فایل‌های لاگ که حجم پروژه را الکی زیاد می‌کنند
+*.log
+logs/
+logs.txt
+# --- IDE & OS Junk ---
+# فایل‌های تنظیمات ادیتورها و سیستم عامل
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# --- Telegram Bot Specifics ---
+# اگر از کتابخانه‌هایی استفاده می‌کنی که فایل سشن می‌سازند (مثل Pyrogram یا Telethon)
+*.session
+*.session-journal
