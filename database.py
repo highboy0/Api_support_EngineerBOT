@@ -31,6 +31,17 @@ class DatabaseManager:
             )
         """)
         self.conn.commit()
+        # Ensure all fields from config.RESUME_FIELDS exist as columns (migrate if needed)
+        try:
+            self.cursor.execute("PRAGMA table_info(resumes)")
+            existing_cols = [row[1] for row in self.cursor.fetchall()]
+            for field in config.RESUME_FIELDS:
+                if field not in existing_cols:
+                    self.cursor.execute(f"ALTER TABLE resumes ADD COLUMN {field} TEXT")
+            self.conn.commit()
+        except Exception:
+            # If pragma/alter not supported or fails, ignore and continue (table already created earlier)
+            pass
 
     def log(self, level, message):
         """ثبت رویداد در دیتابیس و فایل متنی"""
@@ -46,21 +57,25 @@ class DatabaseManager:
 
     def save_resume_data(self, user_id, data: dict):
         """ذخیره یا به‌روزرسانی اطلاعات رزومه کاربر"""
+        # اگر فیلد مهارت‌ها لیست است، به JSON تبدیل شود
         if 'skills' in data and isinstance(data['skills'], list):
             data['skills'] = json.dumps(data['skills'], ensure_ascii=False)
 
-        fields = [k for k in data if k in config.RESUME_FIELDS]
-        values = [data[k] for k in fields]
+        # برای جلوگیری از خطای SQL در صورت خالی بودن فیلدها، همیشه از لیست کامل فیلدها استفاده می‌کنیم
+        fields = config.RESUME_FIELDS.copy()
+        values = [data.get(k) for k in fields]
 
         field_placeholders = ', '.join(fields)
         value_placeholders = ', '.join(['?' for _ in fields])
-        
+
         query = f"""
             INSERT OR REPLACE INTO resumes (user_id, {field_placeholders})
             VALUES (?, {value_placeholders})
         """
-        
-        self.cursor.execute(query, (user_id, *values))
+
+        # مقدمات پارامترها: user_id به عنوان اولین پارامتر
+        params = (user_id, *values)
+        self.cursor.execute(query, params)
         self.conn.commit()
         self.log("INFO", f"Resume data updated for User ID: {user_id}")
         

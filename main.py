@@ -28,24 +28,26 @@ db = DatabaseManager()
 
 # --- تعاریف FSM ---
 class ResumeStates(StatesGroup):
+    username = State()
     full_name = State()
     study_status = State()
     degree = State()
+    major = State()
     field_university = State()
     gpa = State()
     location = State()
     phone_main = State()
     phone_emergency = State()
-    
-    skills_start = State() 
+
+    skills_start = State()
     skills_select_level = State()
-    
+
     work_sample_upload = State()
     work_history = State()
     job_position = State()
     other_details = State()
     training_request = State()
-    
+
     finished = State()
 
 # --- توابع کمکی ساخت کیبورد (رفع خطای ValidationError) ---
@@ -53,21 +55,23 @@ class ResumeStates(StatesGroup):
 def create_reply_keyboard(texts: list, one_time: bool = False) -> ReplyKeyboardMarkup:
     """ساخت ReplyKeyboardMarkup با تبدیل لیست رشته‌ای به KeyboardButton"""
     keyboard_rows = []
-    
-    # فرض می‌کنیم ورودی یک لیست دو بعدی نیست، بلکه یک لیست تک بعدی از دکمه‌ها در یک ردیف است.
-    # اگر در config دو بعدی است، باید این تابع را پیچیده‌تر کنیم یا در config اصلاح کنیم.
-    # در اینجا فرض می‌کنیم هر آیتم در لیست، یک دکمه است و همه در یک ردیف قرار می‌گیرند.
-    
-    buttons = [KeyboardButton(text=t) for t in texts]
-    if buttons:
-        keyboard_rows.append(buttons)
-        
+    # Arrange buttons in 2 columns per row for a compact layout
+    cols = 2
+    row = []
+    for t in texts:
+        row.append(KeyboardButton(text=t))
+        if len(row) >= cols:
+            keyboard_rows.append(row)
+            row = []
+    if row:
+        keyboard_rows.append(row)
+
     return ReplyKeyboardMarkup(keyboard=keyboard_rows, resize_keyboard=True, one_time_keyboard=one_time)
 
 def get_main_keyboard(is_admin) -> ReplyKeyboardMarkup:
     # ساخت دکمه اصلی
-    main_button = [KeyboardButton(text=config.KEYBOARD_MAIN_TEXTS[0])],
-        
+    main_button = [KeyboardButton(text=config.KEYBOARD_MAIN_TEXTS[0])]
+
     keyboard_rows = [main_button]
     
     # اضافه کردن دکمه ادمین (Admin Panel)
@@ -98,6 +102,41 @@ def get_skill_level_keyboard(skill_name) -> InlineKeyboardMarkup:
     ]
     return InlineKeyboardMarkup(inline_keyboard=kb)
 
+
+def get_major_keyboard() -> InlineKeyboardMarkup:
+    """شیشه‌ای کردن کلیدهای انتخاب رشته (Inline keyboard)"""
+    # ساخت کیبورد با چیدمان چندستونه (پیش‌فرض: 2 ستون) برای ظاهر جمع‌وجور
+    kb = []
+    row = []
+    cols = 2
+    for m in config.KEYBOARD_MAJOR_TEXTS:
+        row.append(InlineKeyboardButton(text=m, callback_data=f"major_{m}"))
+        if len(row) >= cols:
+            kb.append(row)
+            row = []
+    if row:
+        kb.append(row)
+    return InlineKeyboardMarkup(inline_keyboard=kb)
+
+
+def get_consent_keyboard() -> InlineKeyboardMarkup:
+    """کیبورد درخواست تایید شرایط: دو دکمه پذیرش یا عدم پذیرش به صورت شیشه‌ای (Inline)."""
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ شرایط را میپذیرم", callback_data="consent_accept"),
+            InlineKeyboardButton(text="❌ شرایط را نمیپذیرم", callback_data="consent_decline")
+        ]
+    ])
+    return kb
+
+
+def get_skip_worksample_keyboard() -> InlineKeyboardMarkup:
+    """کیبورد شیشه‌ای برای رد کردن مرحله آپلود نمونه‌کار (مرحله بعد)"""
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="مرحله بعد", callback_data="worksample_skip")]
+    ])
+    return kb
+
 def is_valid_phone(phone: str) -> bool:
     return re.fullmatch(r"09\d{9}", phone.strip())
 
@@ -105,51 +144,96 @@ def is_valid_phone(phone: str) -> bool:
 @dp.message(CommandStart())
 async def command_start_handler(message: types.Message, state: FSMContext) -> None:
     await state.clear()
+    # هنگام استارت، متن طولانی شرایط را نمایش بده و درخواست تایید کن
     is_admin = message.from_user.id == config.ADMIN_ID
-    await message.answer(
-        config.START_MESSAGE,
-        reply_markup=get_main_keyboard(is_admin)
-    )
+    await message.answer(config.START_MESSAGE, reply_markup=get_consent_keyboard())
     db.log("INFO", f"User {message.from_user.id} started bot.")
 
 @dp.message(F.text == config.KEYBOARD_MAIN_TEXTS[0], StateFilter(None))
 async def start_resume_flow(message: types.Message, state: FSMContext) -> None:
     await state.clear()
-    await state.set_state(ResumeStates.full_name)
+    # ابتدا آیدی تلگرام را بپرس
+    await state.set_state(ResumeStates.username)
     await message.answer(
-        "**۱. نام، نام خانوادگی و آیدی تلگرام**\n"
-        "لطفاً نام، نام خانوادگی و آیدی تلگرام خود را وارد کنید (مثال: علی رضایی @alirezaei)",
+        "**۱. آیدی تلگرام**\n"
+        "لطفاً آیدی تلگرام خود را وارد کنید (مثال: @alirezaei)",
         reply_markup=types.ReplyKeyboardRemove()
     )
+
+
+# --- Consent handlers ---
+@dp.callback_query(F.data == "consent_accept")
+async def consent_accept(callback: types.CallbackQuery, state: FSMContext) -> None:
+    """اگر کاربر شرایط را پذیرفت، دکمه‌های اصلی نمایش داده می‌شود و ادامه از سر گرفته می‌شود."""
+    await callback.answer()
+    await state.clear()
+    is_admin = callback.from_user.id == config.ADMIN_ID
+    # پاسخ به کال‌بک: ارسال پیام جدید با کیبورد اصلی
+    await bot.send_message(
+        callback.from_user.id,
+        "مرسی؛ شرایط پذیرفته شد. اکنون می‌توانید رزومه خود را ارسال کنید.",
+        reply_markup=get_main_keyboard(is_admin)
+    )
+    db.log("INFO", f"User {callback.from_user.id} accepted terms.")
+
+
+@dp.callback_query(F.data == "consent_decline")
+async def consent_decline(callback: types.CallbackQuery, state: FSMContext) -> None:
+    """اگر کاربر شرایط را نپذیرفت، فرایند متوقف شده و دکمه استارت مجدد نمایش داده می‌شود."""
+    await callback.answer()
+    await state.clear()
+    # نمایش پیام تشکر و یک دکمه استارت مجدد (ReplyKeyboard با دستور /start)
+    restart_kb = ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text="/start")]],
+        resize_keyboard=True,
+        one_time_keyboard=True
+    )
+    await bot.send_message(
+        callback.from_user.id,
+        "متشکریم از شما. در صورت تمایل می‌توانید بعداً دوباره اقدام به ثبت اطلاعات کنید.",
+        reply_markup=restart_kb
+    )
+    db.log("INFO", f"User {callback.from_user.id} declined terms.")
 
 # --- FSM هندلرهای رزومه (استفاده از توابع جدید کیبورد) ---
 
 @dp.message(ResumeStates.full_name)
 async def process_full_name(message: types.Message, state: FSMContext) -> None:
-    match = re.search(r"(.+)\s+@(\w+)", message.text.strip())
-    if not match:
-        await message.answer(
-            "ورودی نامعتبر. لطفاً نام کامل و آیدی تلگرام را با فرمت **(نام و نام خانوادگی @آیدی)** وارد کنید."
-        )
+    # انتظار برای نام و نام خانوادگی (بدون آیدی)
+    text = message.text.strip()
+    if not re.search(r"\S+\s+\S+", text):
+        await message.answer("ورودی نامعتبر. لطفاً نام و نام خانوادگی خود را وارد کنید (مثال: علی رضایی)")
         return
-        
-    full_name, username = match.groups()
-    
+
     await state.update_data(
-        full_name=full_name.strip(), 
-        username=username.strip(),
+        full_name=text,
         register_date=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     )
-    
+
     user_data = await state.get_data()
     db.save_resume_data(message.from_user.id, user_data)
-    
+
     await state.set_state(ResumeStates.study_status)
     await message.answer(
         "**۲. وضعیت تحصیلی**\n"
         "لطفاً وضعیت تحصیلی خود را انتخاب کنید.",
         reply_markup=create_reply_keyboard(config.KEYBOARD_STUDY_STATUS_TEXTS)
     )
+
+
+@dp.message(ResumeStates.username)
+async def process_username(message: types.Message, state: FSMContext) -> None:
+    # انتظار برای آیدی تلگرام؛ ذخیره بدون علامت @
+    txt = message.text.strip()
+    m = re.fullmatch(r"@?(\w{5,32})", txt)
+    if not m:
+        await message.answer("آیدی نامعتبر. لطفاً آیدی تلگرام خود را به صورت @username وارد کنید (بدون فضای خالی).")
+        return
+
+    username = m.group(1)
+    await state.update_data(username=username)
+    await message.answer("لطفاً نام و نام خانوادگی خود را وارد کنید (مثال: علی رضایی)")
+    await state.set_state(ResumeStates.full_name)
 
 @dp.message(ResumeStates.study_status, F.text.in_(config.KEYBOARD_STUDY_STATUS_TEXTS))
 async def process_study_status(message: types.Message, state: FSMContext) -> None:
@@ -169,12 +253,13 @@ async def process_degree(message: types.Message, state: FSMContext) -> None:
     await state.update_data(degree=message.text)
     user_data = await state.get_data()
     db.save_resume_data(message.from_user.id, user_data)
-    
-    await state.set_state(ResumeStates.field_university) # <--- این بخش باید درست باشد
+    # اکنون رشته تحصیلی را از لیست انتخابی بپرس
+    await state.set_state(ResumeStates.major)
     await message.answer(
-        "**۴. رشته تحصیلی و دانشگاه**\n"
-        "لطفاً رشته تحصیلی و نام دانشگاه خود را وارد کنید.",
-        reply_markup=types.ReplyKeyboardRemove()
+        "**۴. رشته تحصیلی**\n"
+        "لطفاً رشته تحصیلی خود را انتخاب کنید.\n\n"
+        "نکته: پس از انتخاب رشته، لطفاً نام دانشگاه یا مؤسسه آموزشی آخرین محل تحصیل را وارد کنید.",
+        reply_markup=get_major_keyboard()
     )
 
 # bot.py (بخش هندلرهای FSM)
@@ -187,11 +272,13 @@ async def process_degree(message: types.Message, state: FSMContext) -> None:
     user_data = await state.get_data()
     db.save_resume_data(message.from_user.id, user_data)
     
-    await state.set_state(ResumeStates.field_university)
+    # اکنون رشته تحصیلی را از لیست انتخابی بپرس
+    await state.set_state(ResumeStates.major)
     await message.answer(
-        "**۴. رشته تحصیلی و دانشگاه**\n"
-        "لطفاً رشته تحصیلی و نام دانشگاه خود را وارد کنید.",
-        reply_markup=types.ReplyKeyboardRemove()
+        "**۴. رشته تحصیلی**\n"
+        "لطفاً رشته تحصیلی خود را انتخاب کنید.\n\n"
+        "نکته: پس از انتخاب رشته، لطفاً نام دانشگاه یا مؤسسه آموزشی آخرین محل تحصیل را وارد کنید.",
+        reply_markup=get_major_keyboard()
     )
 
 # --- اضافه شدن هندلر گمشده: ۴. رشته تحصیلی و دانشگاه ---
@@ -205,6 +292,24 @@ async def process_field_university(message: types.Message, state: FSMContext) ->
     await message.answer(
         "**۵. معدل کل**\n"
         "لطفاً معدل کل خود را وارد کنید (فقط عدد، اعشاری مجاز است)."
+    )
+
+
+@dp.callback_query(F.data.startswith("major_"))
+async def process_major_callback(callback: types.CallbackQuery, state: FSMContext) -> None:
+    """پردازش انتخاب رشته از طریق Inline keyboard و سپس درخواست نام آخرین محل تحصیل."""
+    await callback.answer()
+    major = callback.data[len("major_"):]
+    await state.update_data(major=major)
+    user_data = await state.get_data()
+    db.save_resume_data(callback.from_user.id, user_data)
+
+    await state.set_state(ResumeStates.field_university)
+    await bot.send_message(
+        callback.from_user.id,
+        "**آخرین محل تحصیل**\n" +
+        "لطفاً نام دانشگاه یا مؤسسه آموزشی آخرین محل تحصیل خود را وارد کنید.",
+        reply_markup=types.ReplyKeyboardRemove()
     )
 
 # --- اضافه شدن هندلر گمشده: ۵. معدل کل ---
@@ -294,8 +399,8 @@ async def process_phone_emergency(message: types.Message, state: FSMContext) -> 
 @dp.callback_query(ResumeStates.skills_start, F.data.startswith("skill_"))
 async def process_skill_selection(callback: types.CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
-    
-    skill_action = callback.data.split('_')[1]
+    # امن‌تر کردن پارس کردن callback data: بقیه رشته بعد از پیش‌وند را بگیریم
+    skill_action = callback.data[len("skill_"):]
     
     if skill_action == "continue":
         user_data = await state.get_data()
@@ -307,6 +412,8 @@ async def process_skill_selection(callback: types.CallbackQuery, state: FSMConte
             "**۱۰. آپلود نمونه کار**\n"
             f"لطفاً نمونه کار خود را آپلود کنید (حداکثر **{config.MAX_FILE_SIZE_MB} مگابایت**، فرمت: PDF, DOCX, ZIP, JPG, PNG).\n"
             "**توجه**: فایل خود را به صورت سند (Document) ارسال کنید."
+            ,
+            reply_markup=get_skip_worksample_keyboard()
         )
         return
 
@@ -342,9 +449,15 @@ async def process_other_skill_name(message: types.Message, state: FSMContext) ->
 @dp.callback_query(ResumeStates.skills_select_level, F.data.startswith("level_"))
 async def process_skill_level_selection(callback: types.CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
-    
-    # level_skillname_skilllevel
-    _, skill_name, skill_level = callback.data.split('_')
+
+    # قالب: level_{skill_name}_{level} — برای اطمینان، از rpartition روی آخرین '_' استفاده می‌کنیم
+    payload = callback.data[len("level_"):]
+    skill_name, sep, skill_level = payload.rpartition('_')
+    if not sep:
+        # در صورتی که فرمت غیرمنتظره باشد، یک پاسخ خطا بده
+        await bot.send_message(callback.from_user.id, "خطا در پردازش سطح مهارت. لطفاً دوباره تلاش کنید.")
+        await state.set_state(ResumeStates.skills_start)
+        return
     data = await state.get_data()
     
     # اگر از دکمه Inline انتخاب شده، نام مهارت همان skill_name است
@@ -382,16 +495,26 @@ async def process_skill_level_selection(callback: types.CallbackQuery, state: FS
 
 @dp.message(ResumeStates.work_sample_upload, F.document | F.photo)
 async def process_work_sample(message: types.Message, state: FSMContext) -> None:
-    file_info = message.document or message.photo[-1]
-    
-    if file_info.file_size > config.MAX_FILE_SIZE_BYTES:
+    # ممکن است کاربر فایل ارسال کند یا عکس؛ برای هر دو حالت سازگار رفتار کنیم
+    file_info = message.document if message.document else (message.photo[-1] if message.photo else None)
+    if not file_info:
+        await message.answer("فایلی دریافت نشد. لطفاً فایل را به صورت Document یا Photo ارسال کنید.")
+        return
+
+    file_size = getattr(file_info, 'file_size', None)
+    if file_size and file_size > config.MAX_FILE_SIZE_BYTES:
         await message.answer(
             f"❌ حجم فایل ارسالی ({round(file_info.file_size / 1024 / 1024, 2)} مگابایت) بیشتر از حداکثر مجاز (**{config.MAX_FILE_SIZE_MB} مگابایت**) است. لطفاً فایل دیگری ارسال کنید."
         )
         return
 
     timestamp = int(datetime.now().timestamp())
-    file_extension = os.path.splitext(file_info.file_name or "file")[1]
+    # ممکن است photo فاقد file_name باشد؛ در اینصورت پسوند پیش‌فرض .jpg استفاده می‌کنیم
+    filename = getattr(file_info, 'file_name', None)
+    if not filename:
+        file_extension = '.jpg' if message.photo else os.path.splitext(filename or 'file')[1]
+    else:
+        file_extension = os.path.splitext(filename)[1]
     save_path = os.path.join(
         config.UPLOADS_DIR, 
         f"resume_{message.from_user.id}_{timestamp}{file_extension}"
@@ -417,6 +540,19 @@ async def process_work_sample(message: types.Message, state: FSMContext) -> None
         db.log("ERROR", f"File download failed for user {message.from_user.id}: {e}")
         await message.answer("❌ خطایی در آپلود فایل رخ داد. لطفاً دوباره تلاش کنید.")
         await state.set_state(ResumeStates.work_sample_upload)
+
+
+@dp.callback_query(F.data == "worksample_skip")
+async def worksample_skip_callback(callback: types.CallbackQuery, state: FSMContext) -> None:
+    """پردازش دکمه 'مرحله بعد' در صفحه آپلود نمونه‌کار برای عبور از این مرحله."""
+    await callback.answer()
+    await state.set_state(ResumeStates.work_history)
+    db.log("INFO", f"User {callback.from_user.id} skipped work sample upload.")
+    await bot.send_message(
+        callback.from_user.id,
+        "**۱۱. سابقه کار**\n" + "آیا سابقه کار مرتبط دارید؟",
+        reply_markup=create_reply_keyboard(config.KEYBOARD_WORK_HISTORY_TEXTS)
+    )
 
 @dp.message(ResumeStates.work_sample_upload)
 async def process_work_sample_invalid(message: types.Message) -> None:
@@ -445,7 +581,7 @@ async def process_work_history_no(message: types.Message, state: FSMContext) -> 
     
     await state.set_state(ResumeStates.job_position)
     await message.answer(
-        "**۱۲. جایگاه شغلی مدنظر**\n"
+        "**۱۲. جایگاه مدنظر شغلی طبق توانایی شما**\n"
         "لطفاً جایگاه شغلی مدنظر خود را انتخاب کنید.",
         reply_markup=create_reply_keyboard(config.KEYBOARD_JOB_POSITION_TEXTS)
     )
@@ -461,7 +597,7 @@ async def process_work_history_details(message: types.Message, state: FSMContext
         
         await state.set_state(ResumeStates.job_position)
         await message.answer(
-            "**۱۲. جایگاه شغلی مدنظر**\n"
+            "**۱۲. جایگاه مدنظر شغلی طبق توانایی شما**\n"
             "لطفاً جایگاه شغلی مدنظر خود را انتخاب کنید.",
             reply_markup=create_reply_keyboard(config.KEYBOARD_JOB_POSITION_TEXTS)
         )
@@ -526,24 +662,6 @@ async def admin_back_to_main(message: types.Message) -> None:
 
 # ... (بقیه هندلرهای ادمین بدون نیاز به تغییر ساختار کیبورد) ...
 
-class ResumeStates(StatesGroup):
-    full_name = State()
-    study_status = State()
-    degree = State()
-    field_university = State()
-    gpa = State()
-    location = State()
-    phone_main = State()
-    phone_emergency = State()
-    skills_start = State() 
-    skills_select_level = State()
-    work_sample_upload = State()
-    work_history = State()
-    job_position = State()
-    other_details = State()
-    training_request = State()
-    finished = State()
-
 class AdminStates(StatesGroup):
     search_user = State()
     view_user = State()
@@ -557,10 +675,16 @@ class AdminStates(StatesGroup):
 def create_reply_keyboard(texts: list, one_time: bool = False) -> ReplyKeyboardMarkup:
     """ساخت ReplyKeyboardMarkup با تبدیل لیست رشته‌ای به KeyboardButton"""
     keyboard_rows = []
-    buttons = [KeyboardButton(text=t) for t in texts]
-    if buttons:
-        keyboard_rows.append(buttons)
-        
+    cols = 2
+    row = []
+    for t in texts:
+        row.append(KeyboardButton(text=t))
+        if len(row) >= cols:
+            keyboard_rows.append(row)
+            row = []
+    if row:
+        keyboard_rows.append(row)
+
     return ReplyKeyboardMarkup(keyboard=keyboard_rows, resize_keyboard=True, one_time_keyboard=one_time)
 
 def get_main_keyboard(is_admin) -> ReplyKeyboardMarkup:
