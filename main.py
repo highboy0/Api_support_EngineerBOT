@@ -26,6 +26,19 @@ bot = Bot(
 dp = Dispatcher()
 db = DatabaseManager()
 
+
+async def persist_state_to_db(user_id: int, state: FSMContext) -> None:
+    """Unified helper to persist current FSM state data to the database.
+
+    This centralizes saving logic so the codebase is consistent and
+    every save goes through the same path.
+    """
+    try:
+        data = await state.get_data()
+        db.save_resume_data(user_id, data)
+    except Exception as e:
+        db.log("ERROR", f"Failed to persist state for user {user_id}: {e}")
+
 # --- تعاریف FSM ---
 class ResumeStates(StatesGroup):
     username = State()
@@ -33,6 +46,7 @@ class ResumeStates(StatesGroup):
     study_status = State()
     degree = State()
     major = State()
+    english_level = State()
     field_university = State()
     gpa = State()
     location = State()
@@ -98,6 +112,15 @@ def get_skill_keyboard() -> InlineKeyboardMarkup:
 def get_skill_level_keyboard(skill_name) -> InlineKeyboardMarkup:
     kb = [
         [InlineKeyboardButton(text=level, callback_data=f"level_{skill_name}_{level}")]
+        for level in config.KEYBOARD_SKILL_LEVEL[0]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=kb)
+
+
+def get_english_level_keyboard() -> InlineKeyboardMarkup:
+    """کیبورد شیشه‌ای برای انتخاب میزان تسلط به زبان انگلیسی"""
+    kb = [
+        [InlineKeyboardButton(text=level, callback_data=f"english_{level}")]
         for level in config.KEYBOARD_SKILL_LEVEL[0]
     ]
     return InlineKeyboardMarkup(inline_keyboard=kb)
@@ -210,8 +233,7 @@ async def process_full_name(message: types.Message, state: FSMContext) -> None:
         register_date=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     )
 
-    user_data = await state.get_data()
-    db.save_resume_data(message.from_user.id, user_data)
+    await persist_state_to_db(message.from_user.id, state)
 
     await state.set_state(ResumeStates.study_status)
     await message.answer(
@@ -234,12 +256,12 @@ async def process_username(message: types.Message, state: FSMContext) -> None:
     await state.update_data(username=username)
     await message.answer("لطفاً نام و نام خانوادگی خود را وارد کنید (مثال: علی رضایی)")
     await state.set_state(ResumeStates.full_name)
+    await persist_state_to_db(message.from_user.id, state)
 
 @dp.message(ResumeStates.study_status, F.text.in_(config.KEYBOARD_STUDY_STATUS_TEXTS))
 async def process_study_status(message: types.Message, state: FSMContext) -> None:
     await state.update_data(study_status=message.text)
-    user_data = await state.get_data()
-    db.save_resume_data(message.from_user.id, user_data)
+    await persist_state_to_db(message.from_user.id, state)
     
     await state.set_state(ResumeStates.degree)
     await message.answer(
@@ -251,8 +273,7 @@ async def process_study_status(message: types.Message, state: FSMContext) -> Non
 @dp.message(ResumeStates.degree, F.text.in_(config.KEYBOARD_DEGREE_TEXTS))
 async def process_degree(message: types.Message, state: FSMContext) -> None:
     await state.update_data(degree=message.text)
-    user_data = await state.get_data()
-    db.save_resume_data(message.from_user.id, user_data)
+    await persist_state_to_db(message.from_user.id, state)
     # اکنون رشته تحصیلی را از لیست انتخابی بپرس
     await state.set_state(ResumeStates.major)
     await message.answer(
@@ -301,8 +322,7 @@ async def process_major_callback(callback: types.CallbackQuery, state: FSMContex
     await callback.answer()
     major = callback.data[len("major_"):]
     await state.update_data(major=major)
-    user_data = await state.get_data()
-    db.save_resume_data(callback.from_user.id, user_data)
+    await persist_state_to_db(callback.from_user.id, state)
 
     await state.set_state(ResumeStates.field_university)
     await bot.send_message(
@@ -322,8 +342,7 @@ async def process_gpa(message: types.Message, state: FSMContext) -> None:
         return
         
     await state.update_data(gpa=str(gpa))
-    user_data = await state.get_data()
-    db.save_resume_data(message.from_user.id, user_data)
+    await persist_state_to_db(message.from_user.id, state)
     
     await state.set_state(ResumeStates.location)
     await message.answer(
@@ -344,8 +363,7 @@ async def process_gpa(message: types.Message, state: FSMContext) -> None:
 @dp.message(ResumeStates.location)
 async def process_location(message: types.Message, state: FSMContext) -> None:
     await state.update_data(location=message.text)
-    user_data = await state.get_data()
-    db.save_resume_data(message.from_user.id, user_data)
+    await persist_state_to_db(message.from_user.id, state)
     
     await state.set_state(ResumeStates.phone_main)
     await message.answer(
@@ -363,8 +381,7 @@ async def process_phone_main(message: types.Message, state: FSMContext) -> None:
         return
         
     await state.update_data(phone_main=message.text.strip())
-    user_data = await state.get_data()
-    db.save_resume_data(message.from_user.id, user_data)
+    await persist_state_to_db(message.from_user.id, state)
     
     await state.set_state(ResumeStates.phone_emergency)
     await message.answer(
@@ -381,16 +398,14 @@ async def process_phone_emergency(message: types.Message, state: FSMContext) -> 
         return
         
     await state.update_data(phone_emergency=message.text.strip())
-    user_data = await state.get_data()
-    db.save_resume_data(message.from_user.id, user_data)
-    
+    await persist_state_to_db(message.from_user.id, state)
     await state.update_data(skills=[]) # آماده‌سازی لیست مهارت‌ها
-    await state.set_state(ResumeStates.skills_start)
+    # رفتن به مرحله انتخاب میزان تسلط زبان انگلیسی قبل از شروع مهارت‌ها
+    await state.set_state(ResumeStates.english_level)
     await message.answer(
-        "**۹. مهارت‌های نرم‌افزاری**\n"
-        "لطفاً مهارت‌های خود را از لیست زیر انتخاب کنید و سپس سطح خود را مشخص نمایید.\n"
-        "پس از اتمام، روی **ادامه به مرحله بعد** کلیک کنید.",
-        reply_markup=get_skill_keyboard()
+        "**۹. میزان تسلط به زبان انگلیسی**\n"
+        "لطفاً میزان تسلط خود به زبان انگلیسی را انتخاب کنید.",
+        reply_markup=get_english_level_keyboard()
     )
 
 
@@ -482,11 +497,30 @@ async def process_skill_level_selection(callback: types.CallbackQuery, state: FS
     
     skills_text = "\n".join([f"- **{s['name']}**: {s['level']}" for s in new_skills])
     
+    await persist_state_to_db(callback.from_user.id, state)
     await bot.send_message(
         callback.from_user.id,
         f"مهارت **{final_skill_name}** با سطح **{skill_level}** ثبت شد.\n"
         "**مهارت‌های ثبت‌شده تا کنون:**\n"
         f"{skills_text}",
+        reply_markup=get_skill_keyboard()
+    )
+
+
+@dp.callback_query(F.data.startswith("english_"))
+async def process_english_level(callback: types.CallbackQuery, state: FSMContext) -> None:
+    """پردازش انتخاب میزان تسلط انگلیسی و ادامه به مرحله مهارت‌ها"""
+    await callback.answer()
+    level = callback.data[len("english_"):]
+    await state.update_data(english_level=level)
+    await persist_state_to_db(callback.from_user.id, state)
+
+    await state.set_state(ResumeStates.skills_start)
+    await bot.send_message(
+        callback.from_user.id,
+        "**۱۰. مهارت‌های نرم‌افزاری**\n"
+        "لطفاً مهارت‌های خود را از لیست زیر انتخاب کنید و سپس سطح خود را مشخص نمایید.\n"
+        "پس از اتمام، روی **ادامه به مرحله بعد** کلیک کنید.",
         reply_markup=get_skill_keyboard()
     )
 
@@ -525,8 +559,7 @@ async def process_work_sample(message: types.Message, state: FSMContext) -> None
         await bot.download_file(file.file_path, save_path)
         
         await state.update_data(file_path=save_path)
-        user_data = await state.get_data()
-        db.save_resume_data(message.from_user.id, user_data)
+        await persist_state_to_db(message.from_user.id, state)
         db.log("INFO", f"User {message.from_user.id} uploaded file to: {save_path}")
         
         await state.set_state(ResumeStates.work_history)
@@ -576,8 +609,7 @@ async def process_work_history_yes(message: types.Message, state: FSMContext) ->
 @dp.message(ResumeStates.work_history, F.text == "ندارم")
 async def process_work_history_no(message: types.Message, state: FSMContext) -> None:
     await state.update_data(work_history="ندارم")
-    user_data = await state.get_data()
-    db.save_resume_data(message.from_user.id, user_data)
+    await persist_state_to_db(message.from_user.id, state)
     
     await state.set_state(ResumeStates.job_position)
     await message.answer(
@@ -592,8 +624,7 @@ async def process_work_history_details(message: types.Message, state: FSMContext
     # اگر سابقه کار 'دارم' بوده، این پیام به عنوان شرح سابقه در نظر گرفته می‌شود
     if data.get('work_history') == "دارم":
         await state.update_data(work_history=f"دارم: {message.text}")
-        user_data = await state.get_data()
-        db.save_resume_data(message.from_user.id, user_data)
+        await persist_state_to_db(message.from_user.id, state)
         
         await state.set_state(ResumeStates.job_position)
         await message.answer(
@@ -636,8 +667,11 @@ async def process_other_details(message: types.Message, state: FSMContext) -> No
 async def process_training_request(message: types.Message, state: FSMContext) -> None:
     await state.update_data(training_request=message.text)
     
+    # Ensure final state is persisted and include user_id for admin notification
+    await persist_state_to_db(message.from_user.id, state)
     user_data = await state.get_data()
     user_data['user_id'] = message.from_user.id # برای نوتیفیکیشن ادمین
+    # save again to ensure user_id is present in stored record
     db.save_resume_data(message.from_user.id, user_data)
     
     await state.set_state(ResumeStates.finished)
@@ -756,8 +790,9 @@ def format_resume_data(data: dict) -> str:
 **۲. وضعیت تحصیلی**: {data.get('study_status', 'N/A')}
 **۳. مقطع**: {data.get('degree', 'N/A')}
 **۴. رشته/دانشگاه**: {data.get('field_university', 'N/A')}
-**۵. معدل**: {data.get('gpa', 'N/A')}
-**۶. محل سکونت**: {data.get('location', 'N/A')}
+    **۵. معدل**: {data.get('gpa', 'N/A')}
+**۶. تسلط زبان انگلیسی**: {data.get('english_level', 'N/A')}
+**۷. محل سکونت**: {data.get('location', 'N/A')}
 **۷. تلفن اصلی**: {data.get('phone_main', 'N/A')}
 **۸. تلفن اضطراری**: {data.get('phone_emergency', 'N/A')}
 ---

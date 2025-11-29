@@ -86,7 +86,7 @@ KEYBOARD_SKILL_LEVEL = [["مبتدی", "متوسط", "پیشرفته"]]
 # داده‌های دیتابیس برای ذخیره‌ی ساختار
 RESUME_FIELDS = [
     "full_name", "username", "study_status", "degree", "major", "field_university", "gpa",
-    "location", "phone_main", "phone_emergency", "skills", "work_history",
+    "location", "phone_main", "phone_emergency", "english_level", "skills", "work_history",
     "job_position", "other_details", "training_request", "file_path", "register_date"
 ]
 
