@@ -4,6 +4,9 @@ import sqlite3
 import json
 import datetime
 import pandas as pd
+from openpyxl import load_workbook
+from openpyxl.utils import get_column_letter
+from openpyxl.styles import Alignment, Font
 import config # وارد کردن کل ماژول config
 
 class DatabaseManager:
@@ -267,6 +270,43 @@ class DatabaseManager:
 
         try:
             df.to_excel(config.EXCEL_OUTPUT, index=False, engine='openpyxl')
+
+            # Post-process with openpyxl to improve column widths, wrap text and header style
+            try:
+                wb = load_workbook(config.EXCEL_OUTPUT)
+                ws = wb.active
+
+                # Bold header row and set alignment
+                header_font = Font(bold=True)
+                for cell in ws[1]:
+                    cell.font = header_font
+                    cell.alignment = Alignment(wrap_text=True, vertical='top')
+
+                # Adjust column widths based on max length in each column (header + cells)
+                for i, col in enumerate(df.columns, start=1):
+                    col_letter = get_column_letter(i)
+                    # Compute max length of values in this column
+                    try:
+                        series = df[col].astype(str)
+                        max_length = max(series.map(len).max(), len(str(col)))
+                    except Exception:
+                        max_length = len(str(col))
+
+                    # Set a reasonable width (cap to avoid extremely wide columns)
+                    adjusted_width = min(max_length * 1.2 + 2, 60)
+                    ws.column_dimensions[col_letter].width = adjusted_width
+
+                # Optionally set a default row height for readability
+                for row in ws.iter_rows(min_row=2, max_row=ws.max_row):
+                    for cell in row:
+                        if not cell.alignment:
+                            cell.alignment = Alignment(wrap_text=True, vertical='top')
+
+                wb.save(config.EXCEL_OUTPUT)
+            except Exception as e:
+                # Non-fatal: if post-processing fails, still return the generated file
+                self.log('ERROR', f'Excel post-processing failed: {e}')
+
             self.log("INFO", f"Data exported to {config.EXCEL_OUTPUT}")
             return True, config.EXCEL_OUTPUT
         except Exception as e:
