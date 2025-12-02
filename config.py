@@ -1,9 +1,33 @@
 # config.py
 import os
+from dotenv import load_dotenv
+
+# Load .env (if present)
+load_dotenv()
 
 # --- تنظیمات اصلی ---
-TOKEN = "8490115986:AAFC1N284kS1k0yRALylr4pBRAP5HJ1NCqo"  # توکن ربات خود را اینجا قرار دهید
-ADMIN_ID = 5884300880           # آیدی عددی ادمین
+TOKEN = os.getenv("BOT_TOKEN") or os.getenv("TOKEN") or "8490115986:AAFC1N284kS1k0yRALylr4pBRAP5HJ1NCqo"
+
+# Support multiple admin IDs via .env: set ADMIN_IDS="123,456" or ADMIN_ID="123"
+_admins_env = os.getenv("ADMIN_IDS") or os.getenv("ADMIN_ID")
+ADMIN_IDS = []
+if _admins_env:
+    for part in _admins_env.split(','):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            ADMIN_IDS.append(int(part))
+        except ValueError:
+            # ignore invalid entries
+            continue
+
+# Fallback to a default admin if none provided
+if not ADMIN_IDS:
+    ADMIN_IDS = [5884300880]
+
+# Backwards-compatible single ADMIN_ID (first in the list)
+ADMIN_ID = ADMIN_IDS[0]
 MAX_FILE_SIZE_MB = 200        
 MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
 #SUPPORT_ID = 

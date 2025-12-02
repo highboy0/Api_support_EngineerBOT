@@ -168,7 +168,7 @@ def is_valid_phone(phone: str) -> bool:
 async def command_start_handler(message: types.Message, state: FSMContext) -> None:
     await state.clear()
     # هنگام استارت، متن طولانی شرایط را نمایش بده و درخواست تایید کن
-    is_admin = message.from_user.id == config.ADMIN_ID
+    is_admin = message.from_user.id in config.ADMIN_IDS
     await message.answer(config.START_MESSAGE, reply_markup=get_consent_keyboard())
     db.log("INFO", f"User {message.from_user.id} started bot.")
 
@@ -190,7 +190,7 @@ async def consent_accept(callback: types.CallbackQuery, state: FSMContext) -> No
     """اگر کاربر شرایط را پذیرفت، دکمه‌های اصلی نمایش داده می‌شود و ادامه از سر گرفته می‌شود."""
     await callback.answer()
     await state.clear()
-    is_admin = callback.from_user.id == config.ADMIN_ID
+    is_admin = callback.from_user.id in config.ADMIN_IDS
     # پاسخ به کال‌بک: ارسال پیام جدید با کیبورد اصلی
     await bot.send_message(
         callback.from_user.id,
@@ -679,7 +679,7 @@ async def process_training_request(message: types.Message, state: FSMContext) ->
     # پیام موفقیت آمیز
     await message.answer(
         config.SUCCESS_MESSAGE,
-        reply_markup=get_main_keyboard(message.from_user.id == config.ADMIN_ID)
+        reply_markup=get_main_keyboard(message.from_user.id in config.ADMIN_IDS)
     )
     db.log("SUCCESS", f"Resume successfully submitted by User ID: {message.from_user.id}")
     await state.clear()
@@ -690,7 +690,7 @@ async def process_training_request(message: types.Message, state: FSMContext) ->
 # ... (ادامه کد: توابع notify_admin و هندلرهای ادمین) ...
 @dp.message(F.text == "🏠 منوی اصلی")
 async def admin_back_to_main(message: types.Message) -> None:
-    if message.from_user.id != config.ADMIN_ID:
+    if message.from_user.id not in config.ADMIN_IDS:
         return
     await message.answer("بازگشت به منوی اصلی.", reply_markup=get_main_keyboard(True))
 
@@ -823,13 +823,15 @@ async def notify_admin(data: dict):
     ])
     
     try:
-        await bot.send_message(
-            config.ADMIN_ID,
-            message_text,
-            reply_markup=keyboard,
-            parse_mode=ParseMode.MARKDOWN
-        )
-        db.log("ADMIN", f"Admin notification sent for user {data['user_id']}")
+        # send to all configured admins
+        for admin_id in config.ADMIN_IDS:
+            await bot.send_message(
+                admin_id,
+                message_text,
+                reply_markup=keyboard,
+                parse_mode=ParseMode.MARKDOWN
+            )
+        db.log("ADMIN", f"Admin notification sent for user {data['user_id']} to admins: {config.ADMIN_IDS}")
     except Exception as e:
         db.log("ERROR", f"Failed to send admin notification: {e}")
 
@@ -837,7 +839,7 @@ async def notify_admin(data: dict):
 @dp.callback_query(F.data.startswith("view_resume_"))
 async def admin_view_resume_callback(callback: types.CallbackQuery, state: FSMContext) -> None:
     """هندلر دکمه 'مشاهده رزومه کامل' در نوتیفیکیشن"""
-    if callback.from_user.id != config.ADMIN_ID:
+    if callback.from_user.id not in config.ADMIN_IDS:
         await callback.answer("شما دسترسی ادمین ندارید.", show_alert=True)
         return
     
@@ -881,7 +883,7 @@ async def process_training_request(message: types.Message, state: FSMContext) ->
     
     await message.answer(
         config.SUCCESS_MESSAGE,
-        reply_markup=get_main_keyboard(message.from_user.id == config.ADMIN_ID)
+        reply_markup=get_main_keyboard(message.from_user.id in config.ADMIN_IDS)
     )
     db.log("SUCCESS", f"Resume successfully submitted by User ID: {message.from_user.id}")
     await state.clear()
@@ -897,7 +899,7 @@ async def process_training_request(message: types.Message, state: FSMContext) ->
 @dp.message(F.text == config.KEYBOARD_ADMIN_TEXTS[0])
 @dp.message(F.text == "/admin")
 async def admin_panel_handler(message: types.Message, state: FSMContext) -> None:
-    if message.from_user.id != config.ADMIN_ID:
+    if message.from_user.id not in config.ADMIN_IDS:
         return
     await state.clear()
     await message.answer("**⚙️ پنل مدیریت ربات**\n"
@@ -907,7 +909,7 @@ async def admin_panel_handler(message: types.Message, state: FSMContext) -> None
 # --- بازگشت به منوی اصلی ---
 @dp.message(F.text == "🏠 منوی اصلی")
 async def admin_back_to_main_user(message: types.Message, state: FSMContext) -> None:
-    if message.from_user.id != config.ADMIN_ID:
+    if message.from_user.id not in config.ADMIN_IDS:
         return
     await state.clear()
     await message.answer("بازگشت به منوی اصلی کاربر.", reply_markup=get_main_keyboard(True))
@@ -916,7 +918,7 @@ async def admin_back_to_main_user(message: types.Message, state: FSMContext) -> 
 @dp.message(F.text == "🔙 بازگشت به کاربر", AdminStates.edit_select_field)
 @dp.message(F.text == "🔙 بازگشت به کاربر", AdminStates.edit_enter_value)
 async def admin_back_to_search(message: types.Message, state: FSMContext) -> None:
-    if message.from_user.id != config.ADMIN_ID:
+    if message.from_user.id not in config.ADMIN_IDS:
         return
     await state.set_state(AdminStates.search_user)
     await message.answer("لطفاً عبارت جستجوی جدید را وارد کنید.", reply_markup=types.ReplyKeyboardRemove())
@@ -925,7 +927,7 @@ async def admin_back_to_search(message: types.Message, state: FSMContext) -> Non
 # --- 1. جستجوی کاربر ---
 @dp.message(F.text == "🔎 جستجوی کاربر")
 async def admin_start_search(message: types.Message, state: FSMContext) -> None:
-    if message.from_user.id != config.ADMIN_ID:
+    if message.from_user.id not in config.ADMIN_IDS:
         return
     await state.clear()
     await state.set_state(AdminStates.search_user)
@@ -966,7 +968,7 @@ async def admin_process_search(message: types.Message, state: FSMContext) -> Non
 # --- 3. دریافت اکسل ---
 @dp.message(F.text == "📤 دریافت اکسل")
 async def admin_export_excel(message: types.Message) -> None:
-    if message.from_user.id != config.ADMIN_ID:
+    if message.from_user.id not in config.ADMIN_IDS:
         return
         
     await message.answer("درحال ساخت فایل اکسل. لطفاً منتظر بمانید...")
@@ -990,7 +992,7 @@ async def admin_export_excel(message: types.Message) -> None:
 
 @dp.message(F.text == "📥 پشتیبان‌گیری")
 async def admin_backup(message: types.Message) -> None:
-    if message.from_user.id != config.ADMIN_ID:
+    if message.from_user.id not in config.ADMIN_IDS:
         return
         
     await message.answer("درحال تهیه پشتیبان...")
@@ -1024,7 +1026,7 @@ async def admin_backup(message: types.Message) -> None:
 # --- 4. آمار کلی ---
 @dp.message(F.text == "📊 آمار کلی")
 async def admin_get_stats(message: types.Message) -> None:
-    if message.from_user.id != config.ADMIN_ID:
+    if message.from_user.id not in config.ADMIN_IDS:
         return
     
     today_date_str = datetime.now().strftime("%Y-%m-%d")
@@ -1041,7 +1043,7 @@ async def admin_get_stats(message: types.Message) -> None:
 # --- 10. لاگ فعالیت‌ها ---
 @dp.message(F.text == "📄 مشاهده لاگ")
 async def admin_view_logs(message: types.Message) -> None:
-    if message.from_user.id != config.ADMIN_ID:
+    if message.from_user.id not in config.ADMIN_IDS:
         return
         
     logs = db.get_all_logs() # نیاز به پیاده‌سازی در database.py
@@ -1069,7 +1071,7 @@ async def admin_view_logs(message: types.Message) -> None:
 # --- 6. ویرایش اطلاعات ---
 @dp.message(F.text == "✏️ ویرایش اطلاعات", AdminStates.view_user)
 async def admin_start_edit(message: types.Message, state: FSMContext) -> None:
-    if message.from_user.id != config.ADMIN_ID:
+    if message.from_user.id not in config.ADMIN_IDS:
         return
         
     await state.set_state(AdminStates.edit_select_field)
@@ -1080,7 +1082,7 @@ async def admin_start_edit(message: types.Message, state: FSMContext) -> None:
 
 @dp.message(AdminStates.edit_select_field, F.text.in_(config.RESUME_FIELDS))
 async def admin_select_field_to_edit(message: types.Message, state: FSMContext) -> None:
-    if message.from_user.id != config.ADMIN_ID:
+    if message.from_user.id not in config.ADMIN_IDS:
         return
         
     field_name = message.text
@@ -1094,7 +1096,7 @@ async def admin_select_field_to_edit(message: types.Message, state: FSMContext) 
 
 @dp.message(AdminStates.edit_enter_value)
 async def admin_enter_new_value(message: types.Message, state: FSMContext) -> None:
-    if message.from_user.id != config.ADMIN_ID:
+    if message.from_user.id not in config.ADMIN_IDS:
         return
         
     data = await state.get_data()
@@ -1127,7 +1129,7 @@ async def admin_enter_new_value(message: types.Message, state: FSMContext) -> No
 # --- 5. حذف کاربر ---
 @dp.message(F.text == "🗑️ حذف کاربر", AdminStates.view_user)
 async def admin_start_delete(message: types.Message, state: FSMContext) -> None:
-    if message.from_user.id != config.ADMIN_ID:
+    if message.from_user.id not in config.ADMIN_IDS:
         return
         
     data = await state.get_data()
@@ -1149,7 +1151,7 @@ async def admin_start_delete(message: types.Message, state: FSMContext) -> None:
 
 @dp.message(AdminStates.delete_confirm)
 async def admin_confirm_delete(message: types.Message, state: FSMContext) -> None:
-    if message.from_user.id != config.ADMIN_ID:
+    if message.from_user.id not in config.ADMIN_IDS:
         return
         
     data = await state.get_data()
@@ -1169,7 +1171,7 @@ async def admin_confirm_delete(message: types.Message, state: FSMContext) -> Non
 # --- 9. بلاک/آنبلاک کاربر ---
 @dp.message(F.text.in_(["🚫 بلاک", "✅ آنبلاک"]), AdminStates.view_user)
 async def admin_block_unblock(message: types.Message, state: FSMContext) -> None:
-    if message.from_user.id != config.ADMIN_ID:
+    if message.from_user.id not in config.ADMIN_IDS:
         return
         
     data = await state.get_data()
