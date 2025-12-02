@@ -2,7 +2,7 @@
 import os
 
 # --- تنظیمات اصلی ---
-TOKEN = "8401976510:AAEk_sXqK6hM6NkKvkIX00YMvrsWoPhDiyo"  # توکن ربات خود را اینجا قرار دهید
+TOKEN = "8490115986:AAFC1N284kS1k0yRALylr4pBRAP5HJ1NCqo"  # توکن ربات خود را اینجا قرار دهید
 ADMIN_ID = 799576925           # آیدی عددی ادمین
 MAX_FILE_SIZE_MB = 200        
 MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
