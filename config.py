@@ -114,7 +114,8 @@ RESUME_FIELDS = [
     "location", "phone_main", "phone_emergency", "english_level", "skills", "work_history",
     "job_position", "other_details", "training_request", "file_path", "register_date",
     # membership-related fields
-    "has_membership", "membership_org", "membership_number", "membership_city"
+    "has_membership", "membership_org", "membership_number", "membership_city",
+    "uploaded_files"
 ]
 
 
@@ -144,7 +145,8 @@ FIELD_LABELS = {
     "has_membership": "عضویت سازمانی",
     "membership_org": "نام سازمان/انجمن",
     "membership_number": "شماره عضویت",
-    "membership_city": "شهر صدور عضویت"
+    "membership_city": "شهر صدور عضویت",
+    "uploaded_files": "فایل‌های آپلود شده"
 }
 
 # نمایش فارسی ساختار رزومه بر اساس ترتیب `RESUME_FIELDS` (برای اکسپورت/نمایش)

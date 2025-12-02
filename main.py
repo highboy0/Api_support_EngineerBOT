@@ -26,6 +26,8 @@ bot = Bot(
 )
 dp = Dispatcher()
 db = DatabaseManager()
+# per-admin toggle to include deleted users in listings
+admin_show_deleted = {}
 
 
 async def persist_state_to_db(user_id: int, state: FSMContext) -> None:
@@ -74,7 +76,7 @@ class ResumeStates(StatesGroup):
 
 # --- توابع کمکی ساخت کیبورد (رفع خطای ValidationError) ---
 
-def create_reply_keyboard(texts: list, one_time: bool = False) -> ReplyKeyboardMarkup:
+def create_reply_keyboard(texts: list, one_time: bool = True) -> ReplyKeyboardMarkup:
     """ساخت ReplyKeyboardMarkup با تبدیل لیست رشته‌ای به KeyboardButton"""
     keyboard_rows = []
     # Arrange buttons in 2 columns per row for a compact layout
@@ -163,8 +165,12 @@ def get_consent_keyboard() -> InlineKeyboardMarkup:
 
 def get_skip_worksample_keyboard() -> InlineKeyboardMarkup:
     """کیبورد شیشه‌ای برای رد کردن مرحله آپلود نمونه‌کار (مرحله بعد)"""
+    # Provide two actions: skip the uploads or finish uploads and continue
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="مرحله بعد", callback_data="worksample_skip")]
+        [
+            InlineKeyboardButton(text="مرحله بعد", callback_data="worksample_skip"),
+            InlineKeyboardButton(text="اتمام آپلود و ارسال فایل", callback_data="worksample_finish")
+        ]
     ])
     return kb
 
@@ -352,6 +358,14 @@ async def process_field_university(message: types.Message, state: FSMContext) ->
 async def process_major_callback(callback: types.CallbackQuery, state: FSMContext) -> None:
     """پردازش انتخاب رشته از طریق Inline keyboard و سپس درخواست نام آخرین محل تحصیل."""
     await callback.answer()
+    # edit the originating message to indicate the selection and remove inline buttons
+    try:
+        await callback.message.edit_text(f"✅ رشته انتخاب شد: {major}")
+    except Exception:
+        try:
+            await callback.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            pass
     major = callback.data[len("major_"):]
     await state.update_data(major=major)
     await persist_state_to_db(callback.from_user.id, state)
@@ -468,8 +482,20 @@ async def process_phone_emergency(message: types.Message, state: FSMContext) -> 
 @dp.callback_query(ResumeStates.skills_start, F.data.startswith("skill_"))
 async def process_skill_selection(callback: types.CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
-    # امن‌تر کردن پارس کردن callback data: بقیه رشته بعد از پیش‌وند را بگیریم
+    # edit the originating message to indicate the selection and remove inline buttons
     skill_action = callback.data[len("skill_"):]
+    try:
+        if skill_action == "continue":
+            await callback.message.edit_text("⏭️ ادامه به مرحله آپلود نمونه‌کار انتخاب شد.")
+        else:
+            display_skill = skill_action if skill_action != "سایر مهارت‌ها" else "سایر"
+            await callback.message.edit_text(f"✅ مهارت انتخاب شد: {display_skill}")
+    except Exception:
+        try:
+            await callback.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+    # امن‌تر کردن پارس کردن callback data: بقیه رشته بعد از پیش‌وند را بگیریم
     
     if skill_action == "continue":
         user_data = await state.get_data()
@@ -523,6 +549,20 @@ async def process_other_skill_name(message: types.Message, state: FSMContext) ->
 @dp.callback_query(ResumeStates.skills_select_level, F.data.startswith("level_"))
 async def process_skill_level_selection(callback: types.CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
+    # edit the originating message to show selected level and remove inline buttons
+    try:
+        # we'll attempt to show a compact confirmation on the source message
+        payload_preview = callback.data[len("level_"):]
+        skill_name_preview, _, level_preview = payload_preview.rpartition('_')
+        if not level_preview:
+            await callback.message.edit_reply_markup(reply_markup=None)
+        else:
+            await callback.message.edit_text(f"✅ سطح {level_preview} برای مهارت {skill_name_preview} انتخاب شد.")
+    except Exception:
+        try:
+            await callback.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            pass
 
     # قالب: level_{skill_name}_{level} — برای اطمینان، از rpartition روی آخرین '_' استفاده می‌کنیم
     payload = callback.data[len("level_"):]
@@ -570,6 +610,14 @@ async def process_skill_level_selection(callback: types.CallbackQuery, state: FS
 async def process_english_level(callback: types.CallbackQuery, state: FSMContext) -> None:
     """پردازش انتخاب میزان تسلط انگلیسی و ادامه به مرحله مهارت‌ها"""
     await callback.answer()
+    # edit source message to indicate chosen english level and remove inline buttons
+    try:
+        await callback.message.edit_text(f"✅ سطح زبان انگلیسی انتخاب شد: {level}")
+    except Exception:
+        try:
+            await callback.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            pass
     level = callback.data[len("english_"):]
     await state.update_data(english_level=level)
     await persist_state_to_db(callback.from_user.id, state)
@@ -613,25 +661,35 @@ async def process_work_sample(message: types.Message, state: FSMContext) -> None
         file_extension = '.jpg' if message.photo else os.path.splitext(filename or 'file')[1]
     else:
         file_extension = os.path.splitext(filename)[1]
-    save_path = os.path.join(
-        config.UPLOADS_DIR, 
-        f"resume_{message.from_user.id}_{timestamp}{file_extension}"
-    )
+    # create per-user uploads folder using user_id and sanitized full name
+    data = await state.get_data()
+    full_name = data.get('full_name') or str(message.from_user.id)
+    # sanitize folder name
+    safe_name = re.sub(r'[<>:"/\\|?*]', '', full_name)
+    safe_name = safe_name.replace(' ', '_')[:50]
+    user_folder = f"{message.from_user.id}_{safe_name}"
+    user_dir = os.path.join(config.UPLOADS_DIR, user_folder)
+    os.makedirs(user_dir, exist_ok=True)
+    save_path = os.path.join(user_dir, f"resume_{message.from_user.id}_{timestamp}{file_extension}")
 
     try:
         file = await bot.get_file(file_info.file_id)
         await bot.download_file(file.file_path, save_path)
-        
-        await state.update_data(file_path=save_path)
+
+        # store in per-user uploaded_files list
+        data = await state.get_data()
+        uploaded = data.get('uploaded_files', []) or []
+        uploaded.append(save_path)
+        await state.update_data(uploaded_files=uploaded, file_path=save_path)
         await persist_state_to_db(message.from_user.id, state)
         db.log("INFO", f"User {message.from_user.id} uploaded file to: {save_path}")
-        
-        await state.set_state(ResumeStates.work_history)
+
+        # remain in the same state so user can upload more files; present finish/skip keyboard
         await message.answer(
-            "**۱۱. سابقه کار**\n"
-            "آیا سابقه کار مرتبط دارید؟",
-            reply_markup=create_reply_keyboard(config.KEYBOARD_WORK_HISTORY_TEXTS)
+            "✅ فایل با موفقیت آپلود شد. می‌توانید فایل دیگری ارسال کنید یا روی 'اتمام آپلود و ارسال فایل' بزنید.",
+            reply_markup=get_skip_worksample_keyboard()
         )
+        await state.set_state(ResumeStates.work_sample_upload)
 
     except Exception as e:
         db.log("ERROR", f"File download failed for user {message.from_user.id}: {e}")
@@ -643,8 +701,39 @@ async def process_work_sample(message: types.Message, state: FSMContext) -> None
 async def worksample_skip_callback(callback: types.CallbackQuery, state: FSMContext) -> None:
     """پردازش دکمه 'مرحله بعد' در صفحه آپلود نمونه‌کار برای عبور از این مرحله."""
     await callback.answer()
+    # edit source message to indicate the step was skipped and remove inline buttons
+    try:
+        await callback.message.edit_text("⏭️ مرحله آپلود نمونه‌کار نادیده گرفته شد.")
+    except Exception:
+        try:
+            await callback.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            pass
     await state.set_state(ResumeStates.work_history)
     db.log("INFO", f"User {callback.from_user.id} skipped work sample upload.")
+    await bot.send_message(
+        callback.from_user.id,
+        "**۱۱. سابقه کار**\n" + "آیا سابقه کار مرتبط دارید؟",
+        reply_markup=create_reply_keyboard(config.KEYBOARD_WORK_HISTORY_TEXTS)
+    )
+
+
+@dp.callback_query(F.data == "worksample_finish")
+async def worksample_finish_callback(callback: types.CallbackQuery, state: FSMContext) -> None:
+    """User finished uploading files and wants to continue the flow."""
+    await callback.answer()
+    # edit source message to indicate uploads finished and remove inline buttons
+    try:
+        await callback.message.edit_text(f"✅ آپلودها تکمیل شد. تعداد فایل‌ها: {len(uploaded)}")
+    except Exception:
+        try:
+            await callback.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+    data = await state.get_data()
+    uploaded = data.get('uploaded_files', []) or []
+    db.log("INFO", f"User {callback.from_user.id} finished uploads. {len(uploaded)} files saved.")
+    await state.set_state(ResumeStates.work_history)
     await bot.send_message(
         callback.from_user.id,
         "**۱۱. سابقه کار**\n" + "آیا سابقه کار مرتبط دارید؟",
@@ -686,8 +775,8 @@ async def process_work_history_no(message: types.Message, state: FSMContext) -> 
 
     await state.set_state(ResumeStates.job_position)
     await message.answer(
-        "**۱۲. جایگاه مدنظر شغلی طبق توانایی شما**\n"
-        "لطفاً جایگاه شغلی مدنظر خود را انتخاب کنید.",
+        "**۱۲. جایگاه شغلی طبق توانایی شما**\n"
+        "لطفاً جایگاه مدنظر خود را انتخاب کنید.",
         reply_markup=create_reply_keyboard(config.KEYBOARD_JOB_POSITION_TEXTS)
     )
 
@@ -701,8 +790,8 @@ async def process_work_history_details(message: types.Message, state: FSMContext
         
         await state.set_state(ResumeStates.job_position)
         await message.answer(
-            "**۱۲. جایگاه مدنظر شغلی طبق توانایی شما**\n"
-            "لطفاً جایگاه شغلی مدنظر خود را انتخاب کنید.",
+            "**۱۲. جایگاه شغلی طبق توانایی شما**\n"
+            "لطفاً جایگاه مدنظر خود را انتخاب کنید.",
             reply_markup=create_reply_keyboard(config.KEYBOARD_JOB_POSITION_TEXTS)
         )
         return
@@ -869,6 +958,14 @@ async def process_training_request(message: types.Message, state: FSMContext) ->
 @dp.callback_query(F.data == "confirm_send")
 async def callback_confirm_send(callback: types.CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
+    # edit source confirmation message so buttons are not ambiguous
+    try:
+        await callback.message.edit_text("✅ رزومه تایید و ارسال شد. دکمه‌ها غیرفعال شدند.")
+    except Exception:
+        try:
+            await callback.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            pass
     user_id = callback.from_user.id
     user_data = await state.get_data()
     user_data['user_id'] = user_id
@@ -885,6 +982,14 @@ async def callback_confirm_send(callback: types.CallbackQuery, state: FSMContext
 @dp.callback_query(F.data == "edit_resume")
 async def callback_edit_resume(callback: types.CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
+    # edit the confirmation message to indicate the user chose to edit
+    try:
+        await callback.message.edit_text("✏️ کاربر در حال ویرایش رزومه است. دکمه‌ها غیرفعال شدند.")
+    except Exception:
+        try:
+            await callback.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            pass
     await state.set_state(ResumeStates.edit_field)
     await bot.send_message(callback.from_user.id, "لطفاً فیلد موردنظر برای ویرایش را انتخاب کنید:", reply_markup=get_edit_fields_keyboard())
 
@@ -1056,6 +1161,7 @@ async def admin_back_to_main(message: types.Message) -> None:
 
 class AdminStates(StatesGroup):
     search_user = State()
+    list_users = State()
     view_user = State()
     edit_select_field = State()
     edit_enter_value = State()
@@ -1089,11 +1195,13 @@ def get_main_keyboard(is_admin) -> ReplyKeyboardMarkup:
 
 def get_admin_main_keyboard() -> ReplyKeyboardMarkup:
     """منوی اصلی پنل ادمین"""
-    keyboard_rows = [
-        [KeyboardButton(text="🔎 جستجوی کاربر"), KeyboardButton(text="📊 آمار کلی")],
-        [KeyboardButton(text="📤 دریافت اکسل"), KeyboardButton(text="📥 پشتیبان‌گیری")],
-        [KeyboardButton(text="📄 مشاهده لاگ"), KeyboardButton(text="🏠 منوی اصلی")]
-    ]
+    # toggle label based on per-admin setting if available
+    keyboard_rows = []
+    keyboard_rows.append([KeyboardButton(text="📋 لیست کاربران"), KeyboardButton(text="🔎 جستجوی کاربر")])
+    keyboard_rows.append([KeyboardButton(text="📊 آمار کلی"), KeyboardButton(text="📤 دریافت اکسل")])
+    keyboard_rows.append([KeyboardButton(text="📥 پشتیبان‌گیری"), KeyboardButton(text="📄 مشاهده لاگ")])
+    # Add toggle button placeholder; actual label is handled by a dedicated handler
+    keyboard_rows.append([KeyboardButton(text="🔁 نمایش حذف‌شده‌ها"), KeyboardButton(text="🏠 منوی اصلی")])
     return ReplyKeyboardMarkup(keyboard=keyboard_rows, resize_keyboard=True)
 
 def get_user_actions_keyboard(user_id: int, is_blocked: bool) -> ReplyKeyboardMarkup:
@@ -1102,7 +1210,8 @@ def get_user_actions_keyboard(user_id: int, is_blocked: bool) -> ReplyKeyboardMa
     keyboard_rows = [
         [KeyboardButton(text="✏️ ویرایش اطلاعات"), KeyboardButton(text="🗑️ حذف کاربر")],
         [KeyboardButton(text=block_status)],
-        [KeyboardButton(text="🔙 بازگشت به جستجو")]
+        [KeyboardButton(text="🔙 بازگشت به جستجو")],
+        [KeyboardButton(text="بازگشت به صفحه اصلی")]
     ]
     return ReplyKeyboardMarkup(keyboard=keyboard_rows, resize_keyboard=True)
 
@@ -1126,7 +1235,8 @@ def get_user_fields_keyboard():
     if row:
         keyboard_rows.append(row)
 
-    keyboard_rows.append([KeyboardButton(text="انصراف")])
+    # add confirm and cancel buttons similar to user edit menu
+    keyboard_rows.append([KeyboardButton(text="تایید ویرایش"), KeyboardButton(text="انصراف")])
 
     return ReplyKeyboardMarkup(keyboard=keyboard_rows, resize_keyboard=True, one_time_keyboard=True)
 
@@ -1143,6 +1253,7 @@ def format_resume_data(data: dict) -> str:
             return html.escape(str(v))
         return html.escape(str(v))
 
+    # normalize skills (DB may contain JSON string or already a list)
     skills = data.get('skills', [])
     if isinstance(skills, str):
         try:
@@ -1150,12 +1261,15 @@ def format_resume_data(data: dict) -> str:
         except Exception:
             skills = []
 
-    if skills:
+    if isinstance(skills, list) and skills:
         skills_lines = []
         for s in skills:
-            name = safe(s.get('name', 'N/A'))
-            level = safe(s.get('level', 'N/A'))
-            skills_lines.append(f"• {name}: {level}")
+            if isinstance(s, dict):
+                name = safe(s.get('name', 'N/A'))
+                level = safe(s.get('level', 'N/A'))
+                skills_lines.append(f"• {name}: {level}")
+            else:
+                skills_lines.append(html.escape(str(s)))
         skills_text = "\n".join(skills_lines)
     else:
         skills_text = "ندارد"
@@ -1164,33 +1278,20 @@ def format_resume_data(data: dict) -> str:
     username = html.escape(str(data.get('username', 'N/A')))
     register_date = html.escape(str(data.get('register_date', 'N/A')))
 
-    # Build message using newlines; avoid unsupported HTML tags such as <br>
-    text_lines = [
-        f"<b>👤 اطلاعات کامل کاربر</b>",
-        "---",
-        f"<b>🆔 آیدی تلگرام</b>: <code>{user_id}</code>",
-        f"<b>@ یوزرنیم</b>: @{username}",
-        f"<b>🗓 تاریخ ثبت</b>: {register_date}",
-        "---",
-        f"<b>۱. نام کامل</b>: {safe(data.get('full_name'))}",
-        f"<b>۲. وضعیت تحصیلی</b>: {safe(data.get('study_status'))}",
-        f"<b>۳. مقطع</b>: {safe(data.get('degree'))}",
-        f"<b>۴. رشته/دانشگاه</b>: {safe(data.get('field_university'))}",
-        f"<b>۵. معدل</b>: {safe(data.get('gpa'))}",
-        f"<b>۶. تسلط زبان انگلیسی</b>: {safe(data.get('english_level'))}",
-        f"<b>۷. محل سکونت</b>: {safe(data.get('location'))}",
-        f"<b>۷. تلفن اصلی</b>: {safe(data.get('phone_main'))}",
-        f"<b>۸. تلفن اضطراری</b>: {safe(data.get('phone_emergency'))}",
-        "---",
-        f"<b>۹. مهارت‌ها</b>:",
-        skills_text,
-        "---",
-        f"<b>۱۰. مسیر فایل نمونه کار</b>: <code>{html.escape(str(data.get('file_path', 'ندارد')))}</code>",
-        f"<b>۱۱. سابقه کار</b>: {safe(data.get('work_history'))}",
-        f"<b>۱۲. جایگاه مدنظر</b>: {safe(data.get('job_position'))}",
-        f"<b>۱۳. توضیحات دیگر</b>: {safe(data.get('other_details'))}",
-        f"<b>۱۴. درخواست آموزش</b>: {safe(data.get('training_request'))}"
-    ]
+    # Build message using all configured RESUME_FIELDS to ensure nothing is missed
+    # Prepend the exact acceptance line requested by admin
+    text_lines = ["(⚠️ قوانین توسط کاربر پذیرفته شده است ✅)", f"<b>👤 اطلاعات کامل کاربر</b>", "---", f"<b>🆔 آیدی عددی</b>: <code>{user_id}</code>", f"<b>@ یوزرنیم</b>: @{username}", f"<b>🗓 تاریخ ثبت</b>: {register_date}", "---"]
+
+    for idx, field in enumerate(config.RESUME_FIELDS, start=1):
+        label = config.FIELD_LABELS.get(field, field)
+        if field == 'skills':
+            value = skills_text
+        elif field == 'file_path':
+            value = f"<code>{html.escape(str(data.get(field, 'ندارد')))}</code>"
+        else:
+            value = safe(data.get(field))
+
+        text_lines.append(f"<b>{idx}. {label}</b>: {value}")
 
     return "\n".join(text_lines)
 
@@ -1231,6 +1332,14 @@ async def admin_view_resume_callback(callback: types.CallbackQuery, state: FSMCo
         return
     
     await callback.answer("درحال بارگذاری...")
+    # edit the admin notification message to indicate the resume is being viewed
+    try:
+        await callback.message.edit_text("🔎 درخواست نمایش رزومه دریافت شد. دکمه حذف شد.")
+    except Exception:
+        try:
+            await callback.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            pass
     user_id = int(callback.data.split('_')[-1])
     
     user_data = db.get_resume_data(user_id)
@@ -1241,14 +1350,17 @@ async def admin_view_resume_callback(callback: types.CallbackQuery, state: FSMCo
     # ذخیره آیدی کاربر برای اقدامات بعدی
     await state.set_state(AdminStates.view_user)
     await state.update_data(target_user_id=user_id)
-    
+
+    # determine block status from DB
+    is_blocked = bool(int(user_data.get('is_blocked') or 0)) if user_data else False
+
     # (مورد ۲: نمایش اطلاعات کامل)
     text = format_resume_data(user_data)
-    
+
     await bot.send_message(
         callback.from_user.id,
         text,
-        reply_markup=get_user_actions_keyboard(user_id, False), # فرض بر آنبلاک بودن
+        reply_markup=get_user_actions_keyboard(user_id, is_blocked),
         parse_mode=ParseMode.HTML
     )
 
@@ -1271,9 +1383,77 @@ async def admin_panel_handler(message: types.Message, state: FSMContext) -> None
     if message.from_user.id not in config.ADMIN_IDS:
         return
     await state.clear()
+    # build main keyboard and update toggle label dynamically
+    show_deleted = admin_show_deleted.get(message.from_user.id, False)
+    kb = get_admin_main_keyboard()
+    # update the toggle button text to reflect current state
+    toggle_text = "🔁 نمایش حذف‌شده‌ها: روشن" if show_deleted else "🔁 نمایش حذف‌شده‌ها: خاموش"
+    # replace second-to-last row first button
+    try:
+        kb.keyboard[-1][0] = KeyboardButton(text=toggle_text)
+    except Exception:
+        pass
     await message.answer("**⚙️ پنل مدیریت ربات**\n"
                          "لطفاً گزینه مورد نظر خود را انتخاب کنید.",
-                         reply_markup=get_admin_main_keyboard())
+                         reply_markup=kb)
+
+
+@dp.message(F.text == "🔁 نمایش حذف‌شده‌ها")
+async def admin_toggle_show_deleted(message: types.Message, state: FSMContext) -> None:
+    if message.from_user.id not in config.ADMIN_IDS:
+        return
+    current = admin_show_deleted.get(message.from_user.id, False)
+    admin_show_deleted[message.from_user.id] = not current
+    await message.answer(f"وضعیت نمایش حذف‌شده‌ها اکنون {'روشن' if not current else 'خاموش'} شد.")
+    # re-open admin panel to show updated label
+    await admin_panel_handler(message, state)
+
+
+@dp.message(F.text == "📋 لیست کاربران")
+async def admin_list_users_handler(message: types.Message, state: FSMContext) -> None:
+    """Show paginated list of users (16 per page: 2 columns x 8 rows)."""
+    if message.from_user.id not in config.ADMIN_IDS:
+        return
+
+    # first page
+    limit = 16
+    offset = 0
+    # respect per-admin show_deleted toggle
+    show_deleted = admin_show_deleted.get(message.from_user.id, False)
+    rows, total = db.search_resumes(term="", limit=limit, offset=offset, filters={'_include_deleted': show_deleted})
+
+    if not rows:
+        await message.answer("هیچ کاربری برای نمایش وجود ندارد.", reply_markup=get_admin_main_keyboard())
+        return
+
+    # build inline keyboard with 2 columns
+    kb_rows = []
+    row = []
+    for uid, full_name, username, reg in rows:
+        label = f"{full_name} | @{username}" if username else f"{full_name} | {uid}"
+        row.append(InlineKeyboardButton(text=label, callback_data=f"admin_view_{uid}"))
+        if len(row) >= 2:
+            kb_rows.append(row)
+            row = []
+    if row:
+        kb_rows.append(row)
+
+    nav_row = []
+    if offset > 0:
+        nav_row.append(InlineKeyboardButton(text="⟨ قبلی", callback_data="admin_list_prev"))
+    if offset + limit < total:
+        nav_row.append(InlineKeyboardButton(text="بعدی ⟩", callback_data="admin_list_next"))
+    if nav_row:
+        kb_rows.append(nav_row)
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=kb_rows)
+
+    # store pagination state
+    await state.set_state(AdminStates.list_users)
+    await state.update_data(admin_list_offset=offset, admin_list_limit=limit, admin_list_total=total)
+
+    await message.answer(f"نمایش کاربران ({min(offset+1, total)} - {min(offset+limit, total)} از {total}):", reply_markup=None)
+    await message.answer("لطفاً روی یک کاربر کلیک کنید تا مشخصات وی نمایش داده شود.", reply_markup=keyboard)
 
 # --- بازگشت به منوی اصلی ---
 @dp.message(F.text == "🏠 منوی اصلی")
@@ -1293,6 +1473,24 @@ async def admin_back_to_search(message: types.Message, state: FSMContext) -> Non
     await message.answer("لطفاً عبارت جستجوی جدید را وارد کنید.", reply_markup=types.ReplyKeyboardRemove())
 
 
+@dp.message(F.text == "بازگشت", AdminStates.search_user)
+async def admin_cancel_search(message: types.Message, state: FSMContext) -> None:
+    """Handler for admin pressing 'بازگشت' while in search state: return to admin main menu."""
+    if message.from_user.id not in config.ADMIN_IDS:
+        return
+    await state.clear()
+    await message.answer("بازگشت به منوی مدیریت.", reply_markup=get_admin_main_keyboard())
+
+
+@dp.message(F.text == "بازگشت به صفحه اصلی", AdminStates.view_user)
+async def admin_return_main_from_view(message: types.Message, state: FSMContext) -> None:
+    """Allow admin to return to admin main keyboard from a user view."""
+    if message.from_user.id not in config.ADMIN_IDS:
+        return
+    await state.clear()
+    await message.answer("بازگشت به منوی اصلی ادمین.", reply_markup=get_admin_main_keyboard())
+
+
 # --- 1. جستجوی کاربر ---
 @dp.message(F.text == "🔎 جستجوی کاربر")
 async def admin_start_search(message: types.Message, state: FSMContext) -> None:
@@ -1300,7 +1498,9 @@ async def admin_start_search(message: types.Message, state: FSMContext) -> None:
         return
     await state.clear()
     await state.set_state(AdminStates.search_user)
-    await message.answer("لطفاً نام کامل، بخشی از نام یا یوزرنیم کاربر را وارد کنید:", reply_markup=types.ReplyKeyboardRemove())
+    # Provide a simple reply keyboard with a cancel/back option so admin can abort search
+    back_kb = ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="بازگشت")]], resize_keyboard=True, one_time_keyboard=True)
+    await message.answer("لطفاً نام کامل، بخشی از نام یا یوزرنیم کاربر را وارد کنید:", reply_markup=back_kb)
 
 @dp.message(AdminStates.search_user)
 async def admin_process_search(message: types.Message, state: FSMContext) -> None:
@@ -1450,50 +1650,268 @@ async def admin_start_edit(message: types.Message, state: FSMContext) -> None:
         reply_markup=get_user_fields_keyboard()
     )
 
-@dp.message(AdminStates.edit_select_field, F.text.in_(config.RESUME_FIELDS))
+@dp.message(AdminStates.edit_select_field)
 async def admin_select_field_to_edit(message: types.Message, state: FSMContext) -> None:
+    """Handle admin selection in the edit-fields menu.
+
+    Supports:
+    - Selecting a Persian-labeled field to edit -> routes to value entry
+    - 'تایید ویرایش' -> finish editing and return to user actions
+    - 'انصراف' -> cancel editing and return to user actions
+    """
     if message.from_user.id not in config.ADMIN_IDS:
         return
-        
-    field_name = message.text
-    await state.update_data(edit_field_name=field_name)
+
+    text = message.text.strip()
+
+    # special actions
+    if text == "انصراف":
+        data = await state.get_data()
+        user_id = data.get('target_user_id')
+        await state.set_state(AdminStates.view_user)
+        await message.answer("ویرایش لغو شد.", reply_markup=get_user_actions_keyboard(user_id, False))
+        return
+
+    if text == "تایید ویرایش":
+        data = await state.get_data()
+        user_id = data.get('target_user_id')
+        await state.set_state(AdminStates.view_user)
+        user_data = db.get_resume_data(user_id)
+        is_blocked = bool(int(user_data.get('is_blocked') or 0)) if user_data else False
+        await message.answer("تغییرات ذخیره شد.", reply_markup=get_user_actions_keyboard(user_id, is_blocked))
+        return
+
+    # Map Persian label back to internal field key
+    selected_key = None
+    for key, label in config.FIELD_LABELS.items():
+        if label == text:
+            selected_key = key
+            break
+
+    if not selected_key:
+        await message.answer("فیلد نامعتبر. لطفاً یکی از فیلدهای نمایش‌داده‌شده را انتخاب کنید.")
+        return
+
+    await state.update_data(edit_field_name=selected_key)
     await state.set_state(AdminStates.edit_enter_value)
-    
     await message.answer(
-        f"لطفاً **مقدار جدید** برای فیلد **{field_name}** را وارد کنید:",
+        f"لطفاً مقدار جدید برای فیلد **{text}** را وارد کنید:",
         reply_markup=types.ReplyKeyboardRemove()
     )
+
 
 @dp.message(AdminStates.edit_enter_value)
 async def admin_enter_new_value(message: types.Message, state: FSMContext) -> None:
     if message.from_user.id not in config.ADMIN_IDS:
         return
-        
+
     data = await state.get_data()
     user_id = data.get('target_user_id')
     field_name = data.get('edit_field_name')
     new_value = message.text
-    
+
     if not user_id or not field_name:
         await message.answer("خطای سیستمی در فرآیند ویرایش.")
         await state.set_state(AdminStates.search_user)
         return
-        
-    # ذخیره در دیتابیس
-    success = db.update_user_field(user_id, field_name, new_value) # نیاز به پیاده‌سازی در database.py
-    
+
+    # fetch old value for audit
+    user_data = db.get_resume_data(user_id) or {}
+    old_value = user_data.get(field_name)
+
+    # save
+    success = db.update_user_field(user_id, field_name, new_value)
     if success:
+        # log admin action
+        db.log_admin_action(message.from_user.id, user_id, 'update', field_name, str(old_value), str(new_value))
         await message.answer(f"✅ فیلد **{field_name}** با موفقیت به **{new_value}** تغییر یافت.")
+        # return to edit-fields menu so admin can continue editing
+        await state.set_state(AdminStates.edit_select_field)
+        await state.update_data(target_user_id=user_id)
+        await message.answer("ویرایش انجام شد. فیلد دیگری می‌خواهید ویرایش کنید؟", reply_markup=get_user_fields_keyboard())
     else:
         await message.answer("❌ خطا در به‌روزرسانی دیتابیس.")
+        # on failure, go back to view
+        user_data = db.get_resume_data(user_id)
+        is_blocked = bool(int(user_data.get('is_blocked') or 0)) if user_data else False
+        await state.set_state(AdminStates.view_user)
+        await state.update_data(target_user_id=user_id)
+        await message.answer(format_resume_data(user_data), reply_markup=get_user_actions_keyboard(user_id, is_blocked), parse_mode=ParseMode.HTML)
 
-    # بازگشت به نمایش کاربر
+
+@dp.callback_query(F.data.startswith("admin_view_"))
+async def admin_search_view_callback(callback: types.CallbackQuery, state: FSMContext) -> None:
+    if callback.from_user.id not in config.ADMIN_IDS:
+        await callback.answer("شما دسترسی ادمین ندارید.", show_alert=True)
+        return
+    await callback.answer()
+    user_id = int(callback.data.split('_')[-1])
     user_data = db.get_resume_data(user_id)
+    if not user_data:
+        await callback.message.answer("کاربر با این آیدی پیدا نشد.")
+        return
+
     await state.set_state(AdminStates.view_user)
-    await message.answer(
-        format_resume_data(user_data),
-        reply_markup=get_user_actions_keyboard(user_id, False) 
-    )
+    await state.update_data(target_user_id=user_id)
+    is_blocked = bool(int(user_data.get('is_blocked') or 0)) if user_data else False
+    await callback.message.answer(format_resume_data(user_data), reply_markup=get_user_actions_keyboard(user_id, is_blocked), parse_mode=ParseMode.HTML)
+
+
+@dp.callback_query(F.data == "admin_search_next" )
+async def admin_search_next(callback: types.CallbackQuery, state: FSMContext) -> None:
+    if callback.from_user.id not in config.ADMIN_IDS:
+        await callback.answer("شما دسترسی ادمین ندارید.", show_alert=True)
+        return
+    await callback.answer()
+    data = await state.get_data()
+    term = data.get('admin_search_term', '')
+    offset = data.get('admin_search_offset', 0)
+    limit = data.get('admin_search_limit', 5)
+    new_offset = offset + limit
+    rows, total = db.search_resumes(term, limit=limit, offset=new_offset)
+    # update state
+    await state.update_data(admin_search_offset=new_offset)
+
+    kb_rows = []
+    for uid, full_name, username, reg in rows:
+        label = f"🆔 {uid} | @{username} | {full_name}"
+        kb_rows.append([InlineKeyboardButton(text=label, callback_data=f"admin_view_{uid}")])
+
+    nav_row = []
+    if new_offset > 0:
+        nav_row.append(InlineKeyboardButton(text="⟨ قبلی", callback_data="admin_search_prev"))
+    if new_offset + limit < total:
+        nav_row.append(InlineKeyboardButton(text="بعدی ⟩", callback_data="admin_search_next"))
+    if nav_row:
+        kb_rows.append(nav_row)
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=kb_rows)
+    try:
+        await callback.message.edit_text(f"نتایج جستجو ({new_offset+1}-{min(new_offset+limit, total)} از {total}):")
+        await callback.message.edit_reply_markup(reply_markup=keyboard)
+    except Exception:
+        # fallback: send new message
+        await callback.message.answer(f"نتایج جستجو ({new_offset+1}-{min(new_offset+limit, total)} از {total}):", reply_markup=keyboard)
+
+
+@dp.callback_query(F.data == "admin_list_next")
+async def admin_list_next(callback: types.CallbackQuery, state: FSMContext) -> None:
+    if callback.from_user.id not in config.ADMIN_IDS:
+        await callback.answer("شما دسترسی ادمین ندارید.", show_alert=True)
+        return
+    await callback.answer()
+    data = await state.get_data()
+    offset = data.get('admin_list_offset', 0)
+    limit = data.get('admin_list_limit', 16)
+    total = data.get('admin_list_total', 0)
+    new_offset = offset + limit
+    show_deleted = admin_show_deleted.get(callback.from_user.id, False)
+    rows, total = db.search_resumes(term="", limit=limit, offset=new_offset, filters={'_include_deleted': show_deleted})
+    # update state
+    await state.update_data(admin_list_offset=new_offset, admin_list_total=total)
+
+    kb_rows = []
+    row = []
+    for uid, full_name, username, reg in rows:
+        label = f"{full_name} | @{username}" if username else f"{full_name} | {uid}"
+        row.append(InlineKeyboardButton(text=label, callback_data=f"admin_view_{uid}"))
+        if len(row) >= 2:
+            kb_rows.append(row)
+            row = []
+    if row:
+        kb_rows.append(row)
+
+    nav_row = []
+    if new_offset > 0:
+        nav_row.append(InlineKeyboardButton(text="⟨ قبلی", callback_data="admin_list_prev"))
+    if new_offset + limit < total:
+        nav_row.append(InlineKeyboardButton(text="بعدی ⟩", callback_data="admin_list_next"))
+    if nav_row:
+        kb_rows.append(nav_row)
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=kb_rows)
+    try:
+        await callback.message.edit_text(f"نمایش کاربران ({new_offset+1}-{min(new_offset+limit, total)} از {total}):")
+        await callback.message.edit_reply_markup(reply_markup=keyboard)
+    except Exception:
+        await callback.message.answer(f"نمایش کاربران ({new_offset+1}-{min(new_offset+limit, total)} از {total}):", reply_markup=keyboard)
+
+
+@dp.callback_query(F.data == "admin_list_prev")
+async def admin_list_prev(callback: types.CallbackQuery, state: FSMContext) -> None:
+    if callback.from_user.id not in config.ADMIN_IDS:
+        await callback.answer("شما دسترسی ادمین ندارید.", show_alert=True)
+        return
+    await callback.answer()
+    data = await state.get_data()
+    offset = data.get('admin_list_offset', 0)
+    limit = data.get('admin_list_limit', 16)
+    total = data.get('admin_list_total', 0)
+    new_offset = max(0, offset - limit)
+    show_deleted = admin_show_deleted.get(callback.from_user.id, False)
+    rows, total = db.search_resumes(term="", limit=limit, offset=new_offset, filters={'_include_deleted': show_deleted})
+    await state.update_data(admin_list_offset=new_offset, admin_list_total=total)
+
+    kb_rows = []
+    row = []
+    for uid, full_name, username, reg in rows:
+        label = f"{full_name} | @{username}" if username else f"{full_name} | {uid}"
+        row.append(InlineKeyboardButton(text=label, callback_data=f"admin_view_{uid}"))
+        if len(row) >= 2:
+            kb_rows.append(row)
+            row = []
+    if row:
+        kb_rows.append(row)
+
+    nav_row = []
+    if new_offset > 0:
+        nav_row.append(InlineKeyboardButton(text="⟨ قبلی", callback_data="admin_list_prev"))
+    if new_offset + limit < total:
+        nav_row.append(InlineKeyboardButton(text="بعدی ⟩", callback_data="admin_list_next"))
+    if nav_row:
+        kb_rows.append(nav_row)
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=kb_rows)
+    try:
+        await callback.message.edit_text(f"نمایش کاربران ({new_offset+1}-{min(new_offset+limit, total)} از {total}):")
+        await callback.message.edit_reply_markup(reply_markup=keyboard)
+    except Exception:
+        await callback.message.answer(f"نمایش کاربران ({new_offset+1}-{min(new_offset+limit, total)} از {total}):", reply_markup=keyboard)
+
+
+@dp.callback_query(F.data == "admin_search_prev" )
+async def admin_search_prev(callback: types.CallbackQuery, state: FSMContext) -> None:
+    if callback.from_user.id not in config.ADMIN_IDS:
+        await callback.answer("شما دسترسی ادمین ندارید.", show_alert=True)
+        return
+    await callback.answer()
+    data = await state.get_data()
+    term = data.get('admin_search_term', '')
+    offset = data.get('admin_search_offset', 0)
+    limit = data.get('admin_search_limit', 5)
+    new_offset = max(0, offset - limit)
+    rows, total = db.search_resumes(term, limit=limit, offset=new_offset)
+    await state.update_data(admin_search_offset=new_offset)
+
+    kb_rows = []
+    for uid, full_name, username, reg in rows:
+        label = f"🆔 {uid} | @{username} | {full_name}"
+        kb_rows.append([InlineKeyboardButton(text=label, callback_data=f"admin_view_{uid}")])
+
+    nav_row = []
+    if new_offset > 0:
+        nav_row.append(InlineKeyboardButton(text="⟨ قبلی", callback_data="admin_search_prev"))
+    if new_offset + limit < total:
+        nav_row.append(InlineKeyboardButton(text="بعدی ⟩", callback_data="admin_search_next"))
+    if nav_row:
+        kb_rows.append(nav_row)
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=kb_rows)
+    try:
+        await callback.message.edit_text(f"نتایج جستجو ({new_offset+1}-{min(new_offset+limit, total)} از {total}):")
+        await callback.message.edit_reply_markup(reply_markup=keyboard)
+    except Exception:
+        await callback.message.answer(f"نتایج جستجو ({new_offset+1}-{min(new_offset+limit, total)} از {total}):", reply_markup=keyboard)
 
 
 # --- 5. حذف کاربر ---
@@ -1528,8 +1946,12 @@ async def admin_confirm_delete(message: types.Message, state: FSMContext) -> Non
     user_id = data.get('target_user_id')
     
     if message.text == f"حذف کاربر {user_id}":
-        db.delete_user(user_id) # نیاز به پیاده‌سازی در database.py
-        await message.answer(f"✅ کاربر با آیدی `{user_id}` با موفقیت حذف شد.", reply_markup=get_admin_main_keyboard())
+        # perform soft-delete and log
+        ok = db.soft_delete_user(user_id, message.from_user.id)
+        if ok:
+            await message.answer(f"✅ کاربر با آیدی `{user_id}` با موفقیت حذف (soft-delete) شد.", reply_markup=get_admin_main_keyboard())
+        else:
+            await message.answer(f"❌ خطا در حذف کاربر {user_id}.", reply_markup=get_admin_main_keyboard())
         await state.set_state(None)
     elif message.text == "لغو":
         await message.answer("عملیات حذف لغو شد.", reply_markup=get_admin_main_keyboard())

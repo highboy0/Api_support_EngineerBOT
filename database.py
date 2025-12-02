@@ -1,4 +1,5 @@
 # database.py
+import os
 import sqlite3
 import json
 import datetime
@@ -18,7 +19,10 @@ class DatabaseManager:
                 user_id INTEGER PRIMARY KEY,
                 {', '.join([f'{field} TEXT' for field in config.RESUME_FIELDS])},
                 is_admin_notified INTEGER DEFAULT 0,
-                is_blocked INTEGER DEFAULT 0
+                is_blocked INTEGER DEFAULT 0,
+                is_deleted INTEGER DEFAULT 0,
+                deleted_at TEXT,
+                deleted_by INTEGER
             )
         """)
         # جدول لاگ فعالیت‌ها
@@ -31,6 +35,20 @@ class DatabaseManager:
             )
         """)
         self.conn.commit()
+        # جدول ثبت اعمال ادمین (تاریخچه تغییرات)
+        self.cursor.execute("""
+            CREATE TABLE IF NOT EXISTS admin_actions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT,
+                admin_id INTEGER,
+                target_user_id INTEGER,
+                action_type TEXT,
+                field_name TEXT,
+                old_value TEXT,
+                new_value TEXT
+            )
+        """)
+        self.conn.commit()
         # Ensure all fields from config.RESUME_FIELDS exist as columns (migrate if needed)
         try:
             self.cursor.execute("PRAGMA table_info(resumes)")
@@ -38,6 +56,14 @@ class DatabaseManager:
             for field in config.RESUME_FIELDS:
                 if field not in existing_cols:
                     self.cursor.execute(f"ALTER TABLE resumes ADD COLUMN {field} TEXT")
+            # ensure new admin/soft-delete columns exist
+            extra_cols = ['is_admin_notified', 'is_blocked', 'is_deleted', 'deleted_at', 'deleted_by']
+            for c in extra_cols:
+                if c not in existing_cols:
+                    try:
+                        self.cursor.execute(f"ALTER TABLE resumes ADD COLUMN {c} TEXT")
+                    except Exception:
+                        pass
             self.conn.commit()
         except Exception:
             # If pragma/alter not supported or fails, ignore and continue (table already created earlier)
@@ -57,13 +83,18 @@ class DatabaseManager:
 
     def save_resume_data(self, user_id, data: dict):
         """ذخیره یا به‌روزرسانی اطلاعات رزومه کاربر"""
-        # اگر فیلد مهارت‌ها لیست است، به JSON تبدیل شود
-        if 'skills' in data and isinstance(data['skills'], list):
-            data['skills'] = json.dumps(data['skills'], ensure_ascii=False)
-
-        # برای جلوگیری از خطای SQL در صورت خالی بودن فیلدها، همیشه از لیست کامل فیلدها استفاده می‌کنیم
+        # For any list or dict values (e.g., skills, uploaded_files), store as JSON text
         fields = config.RESUME_FIELDS.copy()
-        values = [data.get(k) for k in fields]
+        values = []
+        for k in fields:
+            v = data.get(k)
+            if isinstance(v, (list, dict)):
+                try:
+                    values.append(json.dumps(v, ensure_ascii=False))
+                except Exception:
+                    values.append(str(v))
+            else:
+                values.append(v)
 
         field_placeholders = ', '.join(fields)
         value_placeholders = ', '.join(['?' for _ in fields])
@@ -73,7 +104,7 @@ class DatabaseManager:
             VALUES (?, {value_placeholders})
         """
 
-        # مقدمات پارامترها: user_id به عنوان اولین پارامتر
+        # Prepare params: user_id first
         params = (user_id, *values)
         self.cursor.execute(query, params)
         self.conn.commit()
@@ -97,6 +128,72 @@ class DatabaseManager:
     def get_resumes_for_export(self):
         self.cursor.execute("SELECT * FROM resumes")
         return self.cursor.fetchall(), [col[0] for col in self.cursor.description]
+
+    def search_resumes(self, term: str, limit: int = 10, offset: int = 0, filters: dict = None):
+        """Search resumes by full_name, username or major with pagination. Returns (rows, total_count)."""
+        filters = filters or {}
+        like = f"%{term.strip()}%"
+        # base where clause - exclude deleted by default
+        include_deleted = filters.pop('_include_deleted', False)
+        if include_deleted:
+            where = "WHERE 1=1"
+        else:
+            where = "WHERE is_deleted = 0"
+        params = []
+        if term:
+            where += " AND (full_name LIKE ? OR username LIKE ? OR major LIKE ?)"
+            params.extend([like, like, like])
+
+        # basic filters support
+        if 'study_status' in filters:
+            where += " AND study_status = ?"
+            params.append(filters['study_status'])
+        if 'degree' in filters:
+            where += " AND degree = ?"
+            params.append(filters['degree'])
+
+        # total count
+        count_q = f"SELECT COUNT(user_id) FROM resumes {where}"
+        self.cursor.execute(count_q, tuple(params))
+        total = self.cursor.fetchone()[0]
+
+        q = f"SELECT user_id, full_name, username, register_date FROM resumes {where} ORDER BY register_date DESC LIMIT ? OFFSET ?"
+        exec_params = tuple(params + [limit, offset])
+        self.cursor.execute(q, exec_params)
+        rows = self.cursor.fetchall()
+        return rows, total
+
+    def log_admin_action(self, admin_id: int, target_user_id: int, action_type: str, field_name: str = None, old_value: str = None, new_value: str = None):
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        self.cursor.execute(
+            "INSERT INTO admin_actions (timestamp, admin_id, target_user_id, action_type, field_name, old_value, new_value) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (timestamp, admin_id, target_user_id, action_type, field_name, old_value, new_value)
+        )
+        self.conn.commit()
+        self.log("ADMIN", f"Admin {admin_id} {action_type} on user {target_user_id} field {field_name} -> {new_value}")
+
+    def soft_delete_user(self, user_id: int, admin_id: int) -> bool:
+        """Mark a user as deleted (soft delete)."""
+        ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        try:
+            self.cursor.execute("UPDATE resumes SET is_deleted = 1, deleted_at = ?, deleted_by = ? WHERE user_id = ?", (ts, admin_id, user_id))
+            self.conn.commit()
+            self.log_admin_action(admin_id, user_id, 'soft_delete', None, None, None)
+            return True
+        except Exception as e:
+            self.log("ERROR", f"soft_delete_user failed: {e}")
+            return False
+
+    def restore_user(self, user_id: int, admin_id: int) -> bool:
+        """Restore a soft-deleted user."""
+        try:
+            self.cursor.execute("UPDATE resumes SET is_deleted = 0, deleted_at = NULL, deleted_by = NULL WHERE user_id = ?", (user_id,))
+            self.conn.commit()
+            self.log_admin_action(admin_id, user_id, 'restore', None, None, None)
+            return True
+        except Exception as e:
+            self.log("ERROR", f"restore_user failed: {e}")
+            return False
     
 # database.py (فقط تابع export_to_excel اصلاح شده)
 
@@ -120,6 +217,18 @@ class DatabaseManager:
                  return x # برگرداندن مقدار اصلی در صورت خالی بودن، نبودن رشته یا خطا
                  
              df['skills'] = df['skills'].apply(format_skills)
+        # format uploaded_files column (JSON list of paths) to friendly list of filenames
+        if 'uploaded_files' in df.columns:
+            def format_uploaded(x):
+                if x and isinstance(x, str) and x.strip().startswith('['):
+                    try:
+                        files = json.loads(x)
+                        if isinstance(files, list):
+                            return "\n".join([os.path.basename(f) for f in files])
+                    except json.JSONDecodeError:
+                        return "خطای تبدیل JSON"
+                return x
+            df['uploaded_files'] = df['uploaded_files'].apply(format_uploaded)
         
         # Reorder columns to a predictable export order: user_id first, then RESUME_FIELDS,
         # then any admin/internal flags.
