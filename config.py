@@ -107,12 +107,46 @@ KEYBOARD_SKILLS = [
 ]
 KEYBOARD_SKILL_LEVEL = [["مبتدی", "متوسط", "پیشرفته"]]
 
-# داده‌های دیتابیس برای ذخیره‌ی ساختار
+# داده‌های دیتابیس برای ذخیره‌ی ساختار (کلیدهای داخلی)
+# افزودن فیلدهای مربوط به عضویت سازمانی تا در ذخیره‌سازی و اکسپورت لحاظ شوند
 RESUME_FIELDS = [
     "full_name", "username", "study_status", "degree", "major", "field_university", "gpa",
     "location", "phone_main", "phone_emergency", "english_level", "skills", "work_history",
-    "job_position", "other_details", "training_request", "file_path", "register_date"
+    "job_position", "other_details", "training_request", "file_path", "register_date",
+    # membership-related fields
+    "has_membership", "membership_org", "membership_number", "membership_city"
 ]
 
 
 SKILLS_LIST = ["GIS", "3D Max", "AutoCAD", "Metashape", "GIS Pro"]
+
+# Mapping of internal field keys to Persian display labels used in edit UI
+FIELD_LABELS = {
+    "full_name": "نام و نام خانوادگی",
+    "username": "آیدی تلگرام",
+    "study_status": "وضعیت تحصیلی",
+    "degree": "مقطع تحصیلی",
+    "major": "رشته تحصیلی",
+    "field_university": "دانشگاه / مؤسسه",
+    "gpa": "معدل کل",
+    "location": "محل سکونت",
+    "phone_main": "تلفن همراه",
+    "phone_emergency": "تلفن اضطراری",
+    "english_level": "تسلط زبان انگلیسی",
+    "skills": "مهارت‌ها",
+    "work_history": "سابقه کار",
+    "job_position": "جایگاه مدنظر",
+    "other_details": "توضیحات دیگر",
+    "training_request": "درخواست آموزش",
+    "file_path": "مسیر نمونه‌کار",
+    "register_date": "تاریخ ثبت",
+    # membership-related (added for edit capability)
+    "has_membership": "عضویت سازمانی",
+    "membership_org": "نام سازمان/انجمن",
+    "membership_number": "شماره عضویت",
+    "membership_city": "شهر صدور عضویت"
+}
+
+# نمایش فارسی ساختار رزومه بر اساس ترتیب `RESUME_FIELDS` (برای اکسپورت/نمایش)
+# این لیست از `FIELD_LABELS` ساخته می‌شود تا همیشه برچسب‌های فارسی هم‌ردیف با کلیدها فراهم باشد
+RESUME_FIELDS_PERSIAN = [FIELD_LABELS.get(k, k) for k in RESUME_FIELDS]

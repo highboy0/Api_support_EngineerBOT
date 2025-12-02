@@ -3,6 +3,7 @@ import asyncio
 import re
 import os
 import json
+import html
 from datetime import datetime
 
 # --- ایمپورت‌های aiogram ---
@@ -242,6 +243,12 @@ async def process_full_name(message: types.Message, state: FSMContext) -> None:
 
     await persist_state_to_db(message.from_user.id, state)
 
+    # If we are editing this single field, return to edit menu
+    data = await state.get_data()
+    if data.get('edit_field_name') == 'full_name':
+        await finish_edit_and_show_menu(message.from_user.id, state)
+        return
+
     await state.set_state(ResumeStates.study_status)
     await message.answer(
         "**۲. وضعیت تحصیلی**\n"
@@ -265,11 +272,20 @@ async def process_username(message: types.Message, state: FSMContext) -> None:
     await state.set_state(ResumeStates.full_name)
     await persist_state_to_db(message.from_user.id, state)
 
+    data = await state.get_data()
+    if data.get('edit_field_name') == 'username':
+        await finish_edit_and_show_menu(message.from_user.id, state)
+        return
+
 @dp.message(ResumeStates.study_status, F.text.in_(config.KEYBOARD_STUDY_STATUS_TEXTS))
 async def process_study_status(message: types.Message, state: FSMContext) -> None:
     await state.update_data(study_status=message.text)
     await persist_state_to_db(message.from_user.id, state)
-    
+    data = await state.get_data()
+    if data.get('edit_field_name') == 'study_status':
+        await finish_edit_and_show_menu(message.from_user.id, state)
+        return
+
     await state.set_state(ResumeStates.degree)
     await message.answer(
         "**۳. مقطع تحصیلی**\n"
@@ -281,6 +297,11 @@ async def process_study_status(message: types.Message, state: FSMContext) -> Non
 async def process_degree(message: types.Message, state: FSMContext) -> None:
     await state.update_data(degree=message.text)
     await persist_state_to_db(message.from_user.id, state)
+    data = await state.get_data()
+    if data.get('edit_field_name') == 'degree':
+        await finish_edit_and_show_menu(message.from_user.id, state)
+        return
+
     # اکنون رشته تحصیلی را از لیست انتخابی بپرس
     await state.set_state(ResumeStates.major)
     await message.answer(
@@ -315,7 +336,11 @@ async def process_field_university(message: types.Message, state: FSMContext) ->
     await state.update_data(field_university=message.text)
     user_data = await state.get_data()
     db.save_resume_data(message.from_user.id, user_data)
-    
+    # if editing this field, return to edit menu
+    if user_data.get('edit_field_name') == 'field_university':
+        await finish_edit_and_show_menu(message.from_user.id, state)
+        return
+
     await state.set_state(ResumeStates.gpa)
     await message.answer(
         "**۵. معدل کل**\n"
@@ -330,6 +355,11 @@ async def process_major_callback(callback: types.CallbackQuery, state: FSMContex
     major = callback.data[len("major_"):]
     await state.update_data(major=major)
     await persist_state_to_db(callback.from_user.id, state)
+
+    data = await state.get_data()
+    if data.get('edit_field_name') == 'major':
+        await finish_edit_and_show_menu(callback.from_user.id, state)
+        return
 
     await state.set_state(ResumeStates.field_university)
     await bot.send_message(
@@ -350,7 +380,11 @@ async def process_gpa(message: types.Message, state: FSMContext) -> None:
         
     await state.update_data(gpa=str(gpa))
     await persist_state_to_db(message.from_user.id, state)
-    
+    data = await state.get_data()
+    if data.get('edit_field_name') == 'gpa':
+        await finish_edit_and_show_menu(message.from_user.id, state)
+        return
+
     await state.set_state(ResumeStates.location)
     await message.answer(
         "**۶. محل سکونت**\n"
@@ -371,7 +405,11 @@ async def process_gpa(message: types.Message, state: FSMContext) -> None:
 async def process_location(message: types.Message, state: FSMContext) -> None:
     await state.update_data(location=message.text)
     await persist_state_to_db(message.from_user.id, state)
-    
+    data = await state.get_data()
+    if data.get('edit_field_name') == 'location':
+        await finish_edit_and_show_menu(message.from_user.id, state)
+        return
+
     await state.set_state(ResumeStates.phone_main)
     await message.answer(
         "**۷. شماره تلفن همراه**\n"
@@ -389,7 +427,11 @@ async def process_phone_main(message: types.Message, state: FSMContext) -> None:
         
     await state.update_data(phone_main=message.text.strip())
     await persist_state_to_db(message.from_user.id, state)
-    
+    data = await state.get_data()
+    if data.get('edit_field_name') == 'phone_main':
+        await finish_edit_and_show_menu(message.from_user.id, state)
+        return
+
     await state.set_state(ResumeStates.phone_emergency)
     await message.answer(
         "**۸. شماره تماس اضطراری**\n"
@@ -406,6 +448,11 @@ async def process_phone_emergency(message: types.Message, state: FSMContext) -> 
         
     await state.update_data(phone_emergency=message.text.strip())
     await persist_state_to_db(message.from_user.id, state)
+    data = await state.get_data()
+    if data.get('edit_field_name') == 'phone_emergency':
+        await finish_edit_and_show_menu(message.from_user.id, state)
+        return
+
     await state.update_data(skills=[]) # آماده‌سازی لیست مهارت‌ها
     # رفتن به مرحله انتخاب میزان تسلط زبان انگلیسی قبل از شروع مهارت‌ها
     await state.set_state(ResumeStates.english_level)
@@ -427,7 +474,12 @@ async def process_skill_selection(callback: types.CallbackQuery, state: FSMConte
     if skill_action == "continue":
         user_data = await state.get_data()
         db.save_resume_data(callback.from_user.id, user_data)
-        
+        data = await state.get_data()
+        # if editing skills, return to edit menu
+        if data.get('edit_field_name') == 'skills':
+            await finish_edit_and_show_menu(callback.from_user.id, state)
+            return
+
         await state.set_state(ResumeStates.work_sample_upload)
         await bot.send_message(
             callback.from_user.id,
@@ -522,6 +574,11 @@ async def process_english_level(callback: types.CallbackQuery, state: FSMContext
     await state.update_data(english_level=level)
     await persist_state_to_db(callback.from_user.id, state)
 
+    data = await state.get_data()
+    if data.get('edit_field_name') == 'english_level':
+        await finish_edit_and_show_menu(callback.from_user.id, state)
+        return
+
     await state.set_state(ResumeStates.skills_start)
     await bot.send_message(
         callback.from_user.id,
@@ -605,7 +662,12 @@ async def process_work_sample_invalid(message: types.Message) -> None:
 @dp.message(ResumeStates.work_history, F.text == "دارم")
 async def process_work_history_yes(message: types.Message, state: FSMContext) -> None:
     await state.update_data(work_history="دارم")
-    
+    await persist_state_to_db(message.from_user.id, state)
+    data = await state.get_data()
+    if data.get('edit_field_name') == 'work_history':
+        await finish_edit_and_show_menu(message.from_user.id, state)
+        return
+
     await state.set_state(ResumeStates.job_position) 
     await message.answer(
         "**۱۱. سابقه کار (ادامه)**\n"
@@ -617,7 +679,11 @@ async def process_work_history_yes(message: types.Message, state: FSMContext) ->
 async def process_work_history_no(message: types.Message, state: FSMContext) -> None:
     await state.update_data(work_history="ندارم")
     await persist_state_to_db(message.from_user.id, state)
-    
+    data = await state.get_data()
+    if data.get('edit_field_name') == 'work_history':
+        await finish_edit_and_show_menu(message.from_user.id, state)
+        return
+
     await state.set_state(ResumeStates.job_position)
     await message.answer(
         "**۱۲. جایگاه مدنظر شغلی طبق توانایی شما**\n"
@@ -647,19 +713,40 @@ async def process_job_position(message: types.Message, state: FSMContext) -> Non
     await state.update_data(job_position=message.text)
     user_data = await state.get_data()
     db.save_resume_data(message.from_user.id, user_data)
-    
+    if user_data.get('edit_field_name') == 'job_position':
+        await finish_edit_and_show_menu(message.from_user.id, state)
+        return
+
     await state.set_state(ResumeStates.other_details)
     await message.answer(
         "**۱۳. توضیحات دیگر**\n"
         "اگر توضیح دیگری دارید که فکر می‌کنید می‌تواند در پذیرش شما موثر باشد، وارد کنید (اختیاری).",
-        reply_markup=types.ReplyKeyboardRemove()
+        reply_markup=create_reply_keyboard(["رد شدن"], one_time=True)
     )
 
 @dp.message(ResumeStates.other_details)
 async def process_other_details(message: types.Message, state: FSMContext) -> None:
+    # Allow user to skip this optional step
+    if message.text.strip() == "رد شدن":
+        await state.update_data(other_details=None)
+        user_data = await state.get_data()
+        db.save_resume_data(message.from_user.id, user_data)
+        # proceed to membership question
+        await state.set_state(ResumeStates.has_membership)
+        await message.answer(
+            "**۱۵. عضویت سازمانی (اختیاری)**\n"
+            "آیا عضو انجمن/شورای مهندسی یا سازمان مشابه هستید؟ (بله/خیر)",
+            reply_markup=create_reply_keyboard(["بله", "خیر"]) 
+        )
+        return
+
     await state.update_data(other_details=message.text)
     user_data = await state.get_data()
     db.save_resume_data(message.from_user.id, user_data)
+    # If user was editing this single field, return to edit menu immediately
+    if user_data.get('edit_field_name') == 'other_details':
+        await finish_edit_and_show_menu(message.from_user.id, state)
+        return
 
     # مسیر جدید: ابتدا بپرسیم آیا عضو انجمن/سند مهندسی هستید.
     await state.set_state(ResumeStates.has_membership)
@@ -727,19 +814,40 @@ def get_confirmation_keyboard() -> InlineKeyboardMarkup:
     ])
 
 
+async def finish_edit_and_show_menu(chat_id: int, state: FSMContext) -> None:
+    """Helper: clear edit_field_name and show the edit menu again."""
+    try:
+        await state.update_data(edit_field_name=None)
+        await state.set_state(ResumeStates.edit_field)
+        await bot.send_message(chat_id, "ویرایش انجام شد. فیلد دیگری می‌خواهید ویرایش کنید؟", reply_markup=get_edit_fields_keyboard())
+    except Exception as e:
+        db.log("ERROR", f"finish_edit_and_show_menu failed: {e}")
+
+
 def get_edit_fields_keyboard() -> ReplyKeyboardMarkup:
-    fields = config.RESUME_FIELDS.copy()
-    # remove internal-only fields from edit list
-    for f in ("register_date", "file_path"):
-        if f in fields:
-            fields.remove(f)
+    # Present Persian labels to the user using config.FIELD_LABELS
+    labels = []
+    for key, label in config.FIELD_LABELS.items():
+        if key in ("register_date", "file_path"):
+            continue
+        labels.append((key, label))
+
     keyboard_rows = []
-    for i in range(0, len(fields), 2):
-        row = [KeyboardButton(text=fields[i])]
-        if i + 1 < len(fields):
-            row.append(KeyboardButton(text=fields[i+1]))
+    cols = 2
+    row = []
+    for _, label in labels:
+        row.append(KeyboardButton(text=label))
+        if len(row) >= cols:
+            keyboard_rows.append(row)
+            row = []
+    if row:
         keyboard_rows.append(row)
-    keyboard_rows.append([KeyboardButton(text="انصراف")])
+
+    # add a confirm-edit button next to cancel so user can finish editing
+    keyboard_rows.append([
+        KeyboardButton(text="تایید ویرایش"),
+        KeyboardButton(text="انصراف")
+    ])
     return ReplyKeyboardMarkup(keyboard=keyboard_rows, resize_keyboard=True, one_time_keyboard=True)
 
 
@@ -755,7 +863,7 @@ async def process_training_request(message: types.Message, state: FSMContext) ->
     await state.set_state(ResumeStates.confirm_resume)
     text = format_resume_data(user_data)
     await message.answer("لطفاً رزومه خود را بررسی کنید و در صورت صحت آن را ارسال یا ویرایش نمایید:")
-    await message.answer(text, reply_markup=get_confirmation_keyboard())
+    await message.answer(text, reply_markup=get_confirmation_keyboard(), parse_mode=ParseMode.HTML)
 
 
 @dp.callback_query(F.data == "confirm_send")
@@ -789,14 +897,130 @@ async def handle_edit_field(message: types.Message, state: FSMContext) -> None:
         data = await state.get_data()
         await state.set_state(ResumeStates.confirm_resume)
         await message.answer("ویرایش لغو شد. پیش‌نمایش رزومه را بررسی کنید:")
-        await message.answer(format_resume_data(data), reply_markup=get_confirmation_keyboard())
+        await message.answer(format_resume_data(data), reply_markup=get_confirmation_keyboard(), parse_mode=ParseMode.HTML)
         return
 
-    if text not in config.RESUME_FIELDS:
+    if text == "تایید ویرایش":
+        # Finalize edits and show profile/preview to the user
+        await persist_state_to_db(message.from_user.id, state)
+        await state.update_data(edit_field_name=None)
+        user_data = await state.get_data()
+        user_data['user_id'] = message.from_user.id
+        await state.set_state(ResumeStates.confirm_resume)
+        await message.answer("ویرایش‌ها ذخیره شد. می‌توانید مشخصات خود را بررسی کنید:")
+        await message.answer(format_resume_data(user_data), reply_markup=get_confirmation_keyboard(), parse_mode=ParseMode.HTML)
+        return
+
+    # Map Persian label back to internal field key
+    selected_key = None
+    for key, label in config.FIELD_LABELS.items():
+        if label == text:
+            selected_key = key
+            break
+
+    if not selected_key:
         await message.answer("فیلد نامعتبر. لطفاً یکی از فیلدهای نمایش‌داده‌شده را انتخاب کنید.")
         return
 
-    await state.update_data(edit_field_name=text)
+    await state.update_data(edit_field_name=selected_key)
+
+    # Route user to the appropriate handler state and send the same prompt
+    if selected_key == 'full_name':
+        await state.set_state(ResumeStates.full_name)
+        await message.answer("لطفاً نام و نام خانوادگی خود را وارد کنید (مثال: علی رضایی)", reply_markup=types.ReplyKeyboardRemove())
+        return
+
+    if selected_key == 'username':
+        await state.set_state(ResumeStates.username)
+        await message.answer("لطفاً آیدی تلگرام خود را وارد کنید (مثال: @alirezaei)", reply_markup=types.ReplyKeyboardRemove())
+        return
+
+    if selected_key == 'study_status':
+        await state.set_state(ResumeStates.study_status)
+        await message.answer("لطفاً وضعیت تحصیلی خود را انتخاب کنید.", reply_markup=create_reply_keyboard(config.KEYBOARD_STUDY_STATUS_TEXTS))
+        return
+
+    if selected_key == 'degree':
+        await state.set_state(ResumeStates.degree)
+        await message.answer("لطفاً مقطع تحصیلی خود را انتخاب کنید.", reply_markup=create_reply_keyboard(config.KEYBOARD_DEGREE_TEXTS))
+        return
+
+    if selected_key == 'major':
+        await state.set_state(ResumeStates.major)
+        await message.answer("لطفاً رشته تحصیلی خود را انتخاب کنید.", reply_markup=get_major_keyboard())
+        return
+
+    if selected_key == 'field_university':
+        await state.set_state(ResumeStates.field_university)
+        await message.answer("لطفاً نام دانشگاه یا مؤسسه آموزشی آخرین محل تحصیل خود را وارد کنید:", reply_markup=types.ReplyKeyboardRemove())
+        return
+
+    if selected_key == 'gpa':
+        await state.set_state(ResumeStates.gpa)
+        await message.answer("لطفاً معدل کل خود را وارد کنید (فقط عدد، اعشاری مجاز است).", reply_markup=types.ReplyKeyboardRemove())
+        return
+
+    if selected_key == 'location':
+        await state.set_state(ResumeStates.location)
+        await message.answer("لطفاً شهر و آدرس دقیق محل سکونت خود را وارد کنید:", reply_markup=types.ReplyKeyboardRemove())
+        return
+
+    if selected_key == 'phone_main':
+        await state.set_state(ResumeStates.phone_main)
+        await message.answer("لطفاً شماره تلفن همراه ۱۱ رقمی خود را وارد کنید (شروع با 09).", reply_markup=types.ReplyKeyboardRemove())
+        return
+
+    if selected_key == 'phone_emergency':
+        await state.set_state(ResumeStates.phone_emergency)
+        await message.answer("لطفاً شماره تماس اضطراری ۱۱ رقمی را وارد کنید (شروع با 09).", reply_markup=types.ReplyKeyboardRemove())
+        return
+
+    if selected_key == 'english_level':
+        await state.set_state(ResumeStates.english_level)
+        await message.answer("لطفاً میزان تسلط خود به زبان انگلیسی را انتخاب کنید:", reply_markup=get_english_level_keyboard())
+        return
+
+    if selected_key == 'work_history':
+        await state.set_state(ResumeStates.work_history)
+        await message.answer("آیا سابقه کار مرتبط دارید؟", reply_markup=create_reply_keyboard(config.KEYBOARD_WORK_HISTORY_TEXTS))
+        return
+
+    if selected_key == 'job_position':
+        await state.set_state(ResumeStates.job_position)
+        await message.answer("لطفاً جایگاه شغلی مدنظر خود را انتخاب کنید.", reply_markup=create_reply_keyboard(config.KEYBOARD_JOB_POSITION_TEXTS))
+        return
+
+    if selected_key == 'other_details':
+        await state.set_state(ResumeStates.other_details)
+        await message.answer("در صورت داشتن توضیحات دیگر، لطفاً وارد کنید:", reply_markup=types.ReplyKeyboardRemove())
+        return
+
+    if selected_key == 'training_request':
+        await state.set_state(ResumeStates.training_request)
+        await message.answer("آیا تمایل به شرکت در دوره‌های آموزشی مرتبط دارید؟", reply_markup=create_reply_keyboard(config.KEYBOARD_TRAINING_REQUEST_TEXTS))
+        return
+
+    # membership related
+    if selected_key in ('membership_org', 'membership_number', 'membership_city', 'has_membership'):
+        # route to membership prompts
+        if selected_key == 'has_membership':
+            await state.set_state(ResumeStates.has_membership)
+            await message.answer("آیا عضو انجمن/شورای مهندسی یا سازمان مشابه هستید؟ (بله/خیر)", reply_markup=create_reply_keyboard(["بله", "خیر"]))
+            return
+        if selected_key == 'membership_org':
+            await state.set_state(ResumeStates.membership_org)
+            await message.answer("لطفاً نام سازمان/انجمن یا مرجع صدور را وارد کنید:")
+            return
+        if selected_key == 'membership_number':
+            await state.set_state(ResumeStates.membership_number)
+            await message.answer("لطفاً شماره عضویت یا مرجع ثبت (در صورت وجود) را وارد کنید (یا 'ندارد'):")
+            return
+        if selected_key == 'membership_city':
+            await state.set_state(ResumeStates.membership_city)
+            await message.answer("لطفاً شهر یا محل صدور عضویت را وارد کنید (در صورت وجود):")
+            return
+
+    # Fallback: ask for a free-text value
     await state.set_state(ResumeStates.edit_value)
     await message.answer(f"لطفاً مقدار جدید برای فیلد **{text}** را وارد کنید:", reply_markup=types.ReplyKeyboardRemove())
 
@@ -819,7 +1043,7 @@ async def handle_edit_value(message: types.Message, state: FSMContext) -> None:
     user_data = await state.get_data()
     await state.set_state(ResumeStates.confirm_resume)
     await message.answer("مقدار با موفقیت بروزرسانی شد. پیش‌نمایش جدید: ")
-    await message.answer(format_resume_data(user_data), reply_markup=get_confirmation_keyboard())
+    await message.answer(format_resume_data(user_data), reply_markup=get_confirmation_keyboard(), parse_mode=ParseMode.HTML)
 
 # ... (ادامه کد: توابع notify_admin و هندلرهای ادمین) ...
 @dp.message(F.text == "🏠 منوی اصلی")
@@ -884,62 +1108,91 @@ def get_user_actions_keyboard(user_id: int, is_blocked: bool) -> ReplyKeyboardMa
 
 def get_user_fields_keyboard():
     """کیبورد فیلدهای قابل ویرایش"""
-    fields = config.RESUME_FIELDS.copy()
-    fields.remove('register_date')
-    fields.remove('file_path')
-    
+    # Build an edit keyboard using Persian labels from config.FIELD_LABELS
+    labels = []
+    for key, label in config.FIELD_LABELS.items():
+        if key in ("register_date", "file_path"):
+            continue
+        labels.append((key, label))
+
     keyboard_rows = []
-    for i in range(0, len(fields), 2):
-        row = [KeyboardButton(text=fields[i])]
-        if i + 1 < len(fields):
-            row.append(KeyboardButton(text=fields[i+1]))
+    cols = 2
+    row = []
+    for _, label in labels:
+        row.append(KeyboardButton(text=label))
+        if len(row) >= cols:
+            keyboard_rows.append(row)
+            row = []
+    if row:
         keyboard_rows.append(row)
-    keyboard_rows.append([KeyboardButton(text="🔙 بازگشت به کاربر")])
-    
-    return ReplyKeyboardMarkup(keyboard=keyboard_rows, resize_keyboard=True)
+
+    keyboard_rows.append([KeyboardButton(text="انصراف")])
+
+    return ReplyKeyboardMarkup(keyboard=keyboard_rows, resize_keyboard=True, one_time_keyboard=True)
 
 
 def is_valid_phone(phone: str) -> bool:
     return re.fullmatch(r"09\d{9}", phone.strip())
 
 def format_resume_data(data: dict) -> str:
-    """فرمت‌دهی اطلاعات رزومه برای نمایش"""
+    """فرمت‌دهی اطلاعات رزومه برای نمایش با HTML-escaping برای جلوگیری از خطاهای parse entities."""
+    def safe(v):
+        if v is None:
+            return "ندارد"
+        if isinstance(v, (list, dict)):
+            return html.escape(str(v))
+        return html.escape(str(v))
+
     skills = data.get('skills', [])
     if isinstance(skills, str):
         try:
             skills = json.loads(skills)
-        except:
+        except Exception:
             skills = []
 
-    skills_text = "\n".join([f"    • {s.get('name', 'N/A')}: {s.get('level', 'N/A')}" for s in skills]) if skills else "ندارد"
+    if skills:
+        skills_lines = []
+        for s in skills:
+            name = safe(s.get('name', 'N/A'))
+            level = safe(s.get('level', 'N/A'))
+            skills_lines.append(f"• {name}: {level}")
+        skills_text = "\n".join(skills_lines)
+    else:
+        skills_text = "ندارد"
 
-    text = f"""
-**👤 اطلاعات کامل کاربر**
----
-**🆔 آیدی تلگرام**: `{data.get('user_id', 'N/A')}`
-**@ یوزرنیم**: @{data.get('username', 'N/A')}
-**🗓 تاریخ ثبت**: {data.get('register_date', 'N/A')}
----
-**۱. نام کامل**: {data.get('full_name', 'N/A')}
-**۲. وضعیت تحصیلی**: {data.get('study_status', 'N/A')}
-**۳. مقطع**: {data.get('degree', 'N/A')}
-**۴. رشته/دانشگاه**: {data.get('field_university', 'N/A')}
-    **۵. معدل**: {data.get('gpa', 'N/A')}
-**۶. تسلط زبان انگلیسی**: {data.get('english_level', 'N/A')}
-**۷. محل سکونت**: {data.get('location', 'N/A')}
-**۷. تلفن اصلی**: {data.get('phone_main', 'N/A')}
-**۸. تلفن اضطراری**: {data.get('phone_emergency', 'N/A')}
----
-**۹. مهارت‌ها**:
-{skills_text}
----
-**۱۰. مسیر فایل نمونه کار**: `{data.get('file_path', 'ندارد')}`
-**۱۱. سابقه کار**: {data.get('work_history', 'N/A')}
-**۱۲. جایگاه مدنظر**: {data.get('job_position', 'N/A')}
-**۱۳. توضیحات دیگر**: {data.get('other_details', 'ندارد')}
-**۱۴. درخواست آموزش**: {data.get('training_request', 'N/A')}
-"""
-    return text
+    user_id = html.escape(str(data.get('user_id', 'N/A')))
+    username = html.escape(str(data.get('username', 'N/A')))
+    register_date = html.escape(str(data.get('register_date', 'N/A')))
+
+    # Build message using newlines; avoid unsupported HTML tags such as <br>
+    text_lines = [
+        f"<b>👤 اطلاعات کامل کاربر</b>",
+        "---",
+        f"<b>🆔 آیدی تلگرام</b>: <code>{user_id}</code>",
+        f"<b>@ یوزرنیم</b>: @{username}",
+        f"<b>🗓 تاریخ ثبت</b>: {register_date}",
+        "---",
+        f"<b>۱. نام کامل</b>: {safe(data.get('full_name'))}",
+        f"<b>۲. وضعیت تحصیلی</b>: {safe(data.get('study_status'))}",
+        f"<b>۳. مقطع</b>: {safe(data.get('degree'))}",
+        f"<b>۴. رشته/دانشگاه</b>: {safe(data.get('field_university'))}",
+        f"<b>۵. معدل</b>: {safe(data.get('gpa'))}",
+        f"<b>۶. تسلط زبان انگلیسی</b>: {safe(data.get('english_level'))}",
+        f"<b>۷. محل سکونت</b>: {safe(data.get('location'))}",
+        f"<b>۷. تلفن اصلی</b>: {safe(data.get('phone_main'))}",
+        f"<b>۸. تلفن اضطراری</b>: {safe(data.get('phone_emergency'))}",
+        "---",
+        f"<b>۹. مهارت‌ها</b>:",
+        skills_text,
+        "---",
+        f"<b>۱۰. مسیر فایل نمونه کار</b>: <code>{html.escape(str(data.get('file_path', 'ندارد')))}</code>",
+        f"<b>۱۱. سابقه کار</b>: {safe(data.get('work_history'))}",
+        f"<b>۱۲. جایگاه مدنظر</b>: {safe(data.get('job_position'))}",
+        f"<b>۱۳. توضیحات دیگر</b>: {safe(data.get('other_details'))}",
+        f"<b>۱۴. درخواست آموزش</b>: {safe(data.get('training_request'))}"
+    ]
+
+    return "\n".join(text_lines)
 
 
 # --- توابع ادمین: نوتیفیکیشن و مشاهده ---
@@ -995,7 +1248,8 @@ async def admin_view_resume_callback(callback: types.CallbackQuery, state: FSMCo
     await bot.send_message(
         callback.from_user.id,
         text,
-        reply_markup=get_user_actions_keyboard(user_id, False) # فرض بر آنبلاک بودن
+        reply_markup=get_user_actions_keyboard(user_id, False), # فرض بر آنبلاک بودن
+        parse_mode=ParseMode.HTML
     )
 
 
@@ -1067,7 +1321,8 @@ async def admin_process_search(message: types.Message, state: FSMContext) -> Non
         
         await message.answer(
             format_resume_data(user_data),
-            reply_markup=get_user_actions_keyboard(user_id, False) # فرض بر آنبلاک بودن
+            reply_markup=get_user_actions_keyboard(user_id, False), # فرض بر آنبلاک بودن
+            parse_mode=ParseMode.HTML
         )
     else:
         # اگر چند نتیجه باشد، لیست نمایش داده می‌شود
@@ -1309,7 +1564,8 @@ async def admin_block_unblock(message: types.Message, state: FSMContext) -> None
     # آپدیت کیبورد با وضعیت جدید (اینجا فرض می‌شود وضعیت بلاک از دیتابیس خوانده شود)
     await message.answer(
         format_resume_data(user_data),
-        reply_markup=get_user_actions_keyboard(user_id, is_blocked) 
+        reply_markup=get_user_actions_keyboard(user_id, is_blocked), 
+        parse_mode=ParseMode.HTML
     )
 
 # --- اجرای ربات ---

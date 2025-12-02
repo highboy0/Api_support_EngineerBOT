@@ -121,6 +121,41 @@ class DatabaseManager:
                  
              df['skills'] = df['skills'].apply(format_skills)
         
+        # Reorder columns to a predictable export order: user_id first, then RESUME_FIELDS,
+        # then any admin/internal flags.
+        ordered_fields = ['user_id'] + config.RESUME_FIELDS + ['is_admin_notified', 'is_blocked']
+        ordered_existing = [c for c in ordered_fields if c in df.columns]
+
+        if ordered_existing:
+            df = df[ordered_existing]
+
+        # Map column headers to Persian labels for a friendly export using RESUME_FIELDS_PERSIAN
+        # Build mapping for the fields we expect
+        header_map = {}
+        # user-friendly labels for extra/internal columns
+        extra_labels = {
+            'user_id': 'آیدی کاربر',
+            'is_admin_notified': 'اطلاع‌رسانی ادمین',
+            'is_blocked': 'بلاک'
+        }
+
+        for col in df.columns:
+            if col in extra_labels:
+                header_map[col] = extra_labels[col]
+            else:
+                # find index in RESUME_FIELDS to pick corresponding Persian label
+                if col in config.RESUME_FIELDS:
+                    idx = config.RESUME_FIELDS.index(col)
+                    # fall back to FIELD_LABELS if RESUME_FIELDS_PERSIAN missing
+                    try:
+                        header_map[col] = config.RESUME_FIELDS_PERSIAN[idx]
+                    except Exception:
+                        header_map[col] = config.FIELD_LABELS.get(col, col)
+                else:
+                    header_map[col] = config.FIELD_LABELS.get(col, col)
+
+        df = df.rename(columns=header_map)
+
         try:
             df.to_excel(config.EXCEL_OUTPUT, index=False, engine='openpyxl')
             self.log("INFO", f"Data exported to {config.EXCEL_OUTPUT}")
