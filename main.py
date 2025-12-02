@@ -885,7 +885,7 @@ async def process_membership_org(message: types.Message, state: FSMContext) -> N
     await state.update_data(membership_org=message.text)
     await persist_state_to_db(message.from_user.id, state)
     await state.set_state(ResumeStates.membership_number)
-    await message.answer("لطفاً شماره عضویت یا مرجع ثبت (در صورت وجود) را وارد کنید (یا 'ندارد' بنویسید):")
+    await message.answer("لطفاً شماره عضویت یا مرجع ثبت (در صورت وجود) را وارد کنید (یا 'ندارم' بنویسید):")
 
 
 @dp.message(ResumeStates.membership_number)
@@ -1133,7 +1133,7 @@ async def handle_edit_field(message: types.Message, state: FSMContext) -> None:
             return
         if selected_key == 'membership_number':
             await state.set_state(ResumeStates.membership_number)
-            await message.answer("لطفاً شماره عضویت یا مرجع ثبت (در صورت وجود) را وارد کنید (یا 'ندارد'):")
+            await message.answer("لطفاً شماره عضویت یا مرجع ثبت (در صورت وجود) را وارد کنید (یا 'ندارم'):")
             return
         if selected_key == 'membership_city':
             await state.set_state(ResumeStates.membership_city)
@@ -1563,17 +1563,31 @@ async def admin_export_excel(message: types.Message) -> None:
     success, file_path = db.export_to_excel() # فراخوانی تابع اصلاح شده در database.py
     
     if success:
+        # First attempt to send the file. Only treat this as a send-failure
+        # if the send itself raises an exception. Cleanup (file removal)
+        # is handled separately so failures during os.remove don't
+        # mistakenly report a send error to the admin.
         try:
             await bot.send_document(
                 message.from_user.id,
                 FSInputFile(file_path),
                 caption="✅ فایل اکسل بروز شده‌ی رزومه‌ها"
             )
-            os.remove(file_path) # حذف فایل موقت پس از ارسال
-            db.log("ADMIN", f"Admin exported Excel file.")
+            db.log("ADMIN", f"Admin exported Excel file and send succeeded.")
         except Exception as e:
             db.log("ERROR", f"Failed to send Excel file: {e}")
-            await message.answer("❌ فایل اکسل ساخته شد، اما ارسال آن با خطا مواجه شد.")
+            # Provide the admin a helpful message but include the path so they
+            # can retrieve it manually if needed.
+            await message.answer(f"❌ فایل اکسل ساخته شد، اما ارسال آن با خطا مواجه شد. مسیر فایل: {file_path}")
+        else:
+            # Try to remove the temporary file; log but do not surface
+            # filesystem errors to the admin as send was successful.
+            try:
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+                    db.log("ADMIN", f"Temporary excel file removed: {file_path}")
+            except Exception as e:
+                db.log("ERROR", f"Failed to remove temporary excel file {file_path}: {e}")
     else:
         await message.answer(f"❌ خطای اکسپورت: {file_path}")
 
