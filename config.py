@@ -114,4 +114,5 @@ RESUME_FIELDS = [
     "job_position", "other_details", "training_request", "file_path", "register_date"
 ]
 
+
 SKILLS_LIST = ["GIS", "3D Max", "AutoCAD", "Metashape", "GIS Pro"]

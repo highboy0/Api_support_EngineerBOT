@@ -60,6 +60,13 @@ class ResumeStates(StatesGroup):
     work_history = State()
     job_position = State()
     other_details = State()
+    has_membership = State()
+    membership_org = State()
+    membership_number = State()
+    membership_city = State()
+    confirm_resume = State()
+    edit_field = State()
+    edit_value = State()
     training_request = State()
 
     finished = State()
@@ -653,7 +660,27 @@ async def process_other_details(message: types.Message, state: FSMContext) -> No
     await state.update_data(other_details=message.text)
     user_data = await state.get_data()
     db.save_resume_data(message.from_user.id, user_data)
-    
+
+    # مسیر جدید: ابتدا بپرسیم آیا عضو انجمن/سند مهندسی هستید.
+    await state.set_state(ResumeStates.has_membership)
+    await message.answer(
+        "**۱۵. عضویت سازمانی (اختیاری)**\n"
+        "آیا عضو انجمن/شورای مهندسی یا سازمان مشابه هستید؟ (بله/خیر)",
+        reply_markup=create_reply_keyboard(["بله", "خیر"]) 
+    )
+
+# --- هندلرها برای عضویت سازمانی و تأیید نهایی رزومه ---
+
+@dp.message(ResumeStates.has_membership, F.text.in_(["بله", "خیر"]))
+async def process_has_membership(message: types.Message, state: FSMContext) -> None:
+    if message.text == "بله":
+        await state.update_data(has_membership="بله")
+        await state.set_state(ResumeStates.membership_org)
+        await message.answer("لطفاً نام سازمان/انجمن یا مرجع صدور را وارد کنید:", reply_markup=types.ReplyKeyboardRemove())
+        return
+
+    # در صورت عدم عضویت، به سوال درخواست آموزش می‌رویم
+    await state.update_data(has_membership="خیر")
     await state.set_state(ResumeStates.training_request)
     await message.answer(
         "**۱۴. درخواست آموزش**\n"
@@ -661,31 +688,138 @@ async def process_other_details(message: types.Message, state: FSMContext) -> No
         reply_markup=create_reply_keyboard(config.KEYBOARD_TRAINING_REQUEST_TEXTS)
     )
 
-# --- مرحله ۱۵ و ۱۶: تکمیل رزومه و نوتیفیکیشن ادمین ---
+
+@dp.message(ResumeStates.membership_org)
+async def process_membership_org(message: types.Message, state: FSMContext) -> None:
+    await state.update_data(membership_org=message.text)
+    await persist_state_to_db(message.from_user.id, state)
+    await state.set_state(ResumeStates.membership_number)
+    await message.answer("لطفاً شماره عضویت یا مرجع ثبت (در صورت وجود) را وارد کنید (یا 'ندارد' بنویسید):")
+
+
+@dp.message(ResumeStates.membership_number)
+async def process_membership_number(message: types.Message, state: FSMContext) -> None:
+    await state.update_data(membership_number=message.text)
+    await persist_state_to_db(message.from_user.id, state)
+    await state.set_state(ResumeStates.membership_city)
+    await message.answer("لطفاً شهر یا محل صدور عضویت را وارد کنید (در صورت وجود):")
+
+
+@dp.message(ResumeStates.membership_city)
+async def process_membership_city(message: types.Message, state: FSMContext) -> None:
+    await state.update_data(membership_city=message.text)
+    await persist_state_to_db(message.from_user.id, state)
+    # بعد از عضویت، به سوال درخواست آموزش می‌رویم
+    await state.set_state(ResumeStates.training_request)
+    await message.answer(
+        "**۱۴. درخواست آموزش**\n"
+        "آیا تمایل به شرکت در دوره‌های آموزشی مرتبط دارید؟",
+        reply_markup=create_reply_keyboard(config.KEYBOARD_TRAINING_REQUEST_TEXTS)
+    )
+
+
+def get_confirmation_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ تایید و ارسال", callback_data="confirm_send"),
+            InlineKeyboardButton(text="✏️ ویرایش", callback_data="edit_resume")
+        ]
+    ])
+
+
+def get_edit_fields_keyboard() -> ReplyKeyboardMarkup:
+    fields = config.RESUME_FIELDS.copy()
+    # remove internal-only fields from edit list
+    for f in ("register_date", "file_path"):
+        if f in fields:
+            fields.remove(f)
+    keyboard_rows = []
+    for i in range(0, len(fields), 2):
+        row = [KeyboardButton(text=fields[i])]
+        if i + 1 < len(fields):
+            row.append(KeyboardButton(text=fields[i+1]))
+        keyboard_rows.append(row)
+    keyboard_rows.append([KeyboardButton(text="انصراف")])
+    return ReplyKeyboardMarkup(keyboard=keyboard_rows, resize_keyboard=True, one_time_keyboard=True)
+
 
 @dp.message(ResumeStates.training_request, F.text.in_(config.KEYBOARD_TRAINING_REQUEST_TEXTS))
 async def process_training_request(message: types.Message, state: FSMContext) -> None:
     await state.update_data(training_request=message.text)
-    
-    # Ensure final state is persisted and include user_id for admin notification
     await persist_state_to_db(message.from_user.id, state)
+
     user_data = await state.get_data()
-    user_data['user_id'] = message.from_user.id # برای نوتیفیکیشن ادمین
-    # save again to ensure user_id is present in stored record
-    db.save_resume_data(message.from_user.id, user_data)
-    
-    await state.set_state(ResumeStates.finished)
-    
-    # پیام موفقیت آمیز
-    await message.answer(
-        config.SUCCESS_MESSAGE,
-        reply_markup=get_main_keyboard(message.from_user.id in config.ADMIN_IDS)
-    )
-    db.log("SUCCESS", f"Resume successfully submitted by User ID: {message.from_user.id}")
-    await state.clear()
-    
-    # نوتیفیکیشن به ادمین (مرحله ۱۶)
+    user_data['user_id'] = message.from_user.id
+
+    # نشان دادن پیش‌نمایش رزومه و درخواست تایید از کاربر
+    await state.set_state(ResumeStates.confirm_resume)
+    text = format_resume_data(user_data)
+    await message.answer("لطفاً رزومه خود را بررسی کنید و در صورت صحت آن را ارسال یا ویرایش نمایید:")
+    await message.answer(text, reply_markup=get_confirmation_keyboard())
+
+
+@dp.callback_query(F.data == "confirm_send")
+async def callback_confirm_send(callback: types.CallbackQuery, state: FSMContext) -> None:
+    await callback.answer()
+    user_id = callback.from_user.id
+    user_data = await state.get_data()
+    user_data['user_id'] = user_id
+    await persist_state_to_db(user_id, state)
+
+    # notify admins
     await notify_admin(user_data)
+    db.log("SUCCESS", f"Resume confirmed and sent by User ID: {user_id}")
+
+    await bot.send_message(user_id, config.SUCCESS_MESSAGE, reply_markup=get_main_keyboard(user_id in config.ADMIN_IDS))
+    await state.clear()
+
+
+@dp.callback_query(F.data == "edit_resume")
+async def callback_edit_resume(callback: types.CallbackQuery, state: FSMContext) -> None:
+    await callback.answer()
+    await state.set_state(ResumeStates.edit_field)
+    await bot.send_message(callback.from_user.id, "لطفاً فیلد موردنظر برای ویرایش را انتخاب کنید:", reply_markup=get_edit_fields_keyboard())
+
+
+@dp.message(ResumeStates.edit_field)
+async def handle_edit_field(message: types.Message, state: FSMContext) -> None:
+    text = message.text.strip()
+    if text == "انصراف":
+        # بازگشت به نمایش پیش‌نمایش
+        data = await state.get_data()
+        await state.set_state(ResumeStates.confirm_resume)
+        await message.answer("ویرایش لغو شد. پیش‌نمایش رزومه را بررسی کنید:")
+        await message.answer(format_resume_data(data), reply_markup=get_confirmation_keyboard())
+        return
+
+    if text not in config.RESUME_FIELDS:
+        await message.answer("فیلد نامعتبر. لطفاً یکی از فیلدهای نمایش‌داده‌شده را انتخاب کنید.")
+        return
+
+    await state.update_data(edit_field_name=text)
+    await state.set_state(ResumeStates.edit_value)
+    await message.answer(f"لطفاً مقدار جدید برای فیلد **{text}** را وارد کنید:", reply_markup=types.ReplyKeyboardRemove())
+
+
+@dp.message(ResumeStates.edit_value)
+async def handle_edit_value(message: types.Message, state: FSMContext) -> None:
+    data = await state.get_data()
+    field = data.get('edit_field_name')
+    if not field:
+        await message.answer("خطا: فیلدی برای ویرایش انتخاب نشده است. از ابتدا تلاش کنید.")
+        await state.set_state(ResumeStates.confirm_resume)
+        return
+
+    new_value = message.text
+    # به‌روزرسانی مقدار فیلد در state
+    await state.update_data(**{field: new_value})
+    await persist_state_to_db(message.from_user.id, state)
+
+    # بازگشت به پیش‌نمایش برای تایید نهایی
+    user_data = await state.get_data()
+    await state.set_state(ResumeStates.confirm_resume)
+    await message.answer("مقدار با موفقیت بروزرسانی شد. پیش‌نمایش جدید: ")
+    await message.answer(format_resume_data(user_data), reply_markup=get_confirmation_keyboard())
 
 # ... (ادامه کد: توابع notify_admin و هندلرهای ادمین) ...
 @dp.message(F.text == "🏠 منوی اصلی")
@@ -869,27 +1003,8 @@ async def admin_view_resume_callback(callback: types.CallbackQuery, state: FSMCo
 # ... (تمام هندلرهای ResumeStates تا process_training_request در اینجا قرار می‌گیرند) ...
 
 
-# --- مرحله ۱۵ و ۱۶: تکمیل رزومه و نوتیفیکیشن ادمین ---
-
-@dp.message(ResumeStates.training_request, F.text.in_(config.KEYBOARD_TRAINING_REQUEST_TEXTS))
-async def process_training_request(message: types.Message, state: FSMContext) -> None:
-    await state.update_data(training_request=message.text)
-    
-    user_data = await state.get_data()
-    user_data['user_id'] = message.from_user.id
-    db.save_resume_data(message.from_user.id, user_data)
-    
-    await state.set_state(ResumeStates.finished)
-    
-    await message.answer(
-        config.SUCCESS_MESSAGE,
-        reply_markup=get_main_keyboard(message.from_user.id in config.ADMIN_IDS)
-    )
-    db.log("SUCCESS", f"Resume successfully submitted by User ID: {message.from_user.id}")
-    await state.clear()
-    
-    # اطمینان از ارسال نوتیفیکیشن (مورد ۱)
-    await notify_admin(user_data)
+# Note: training_request handler was moved earlier to include a confirmation step
+# The real handler is defined above near the membership/confirmation logic.
 
 
 # ===============================================
