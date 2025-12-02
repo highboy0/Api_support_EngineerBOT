@@ -93,16 +93,17 @@ def create_reply_keyboard(texts: list, one_time: bool = True) -> ReplyKeyboardMa
     return ReplyKeyboardMarkup(keyboard=keyboard_rows, resize_keyboard=True, one_time_keyboard=one_time)
 
 def get_main_keyboard(is_admin) -> ReplyKeyboardMarkup:
-    # ساخت دکمه اصلی
-    main_button = [KeyboardButton(text=config.KEYBOARD_MAIN_TEXTS[0])]
+    # ساخت دکمه‌های اصلی: ارسال رزومه و پشتیبانی در یک ردیف، دکمه پنل ادمین در ردیف جداگانه (در صورت ادمین)
+    main_btn = KeyboardButton(text=config.KEYBOARD_MAIN_TEXTS[0])
+    support_btn = KeyboardButton(text=config.SUPPORT_LABEL)
 
-    keyboard_rows = [main_button]
-    
-    # اضافه کردن دکمه ادمین (Admin Panel)
+    keyboard_rows = [[main_btn, support_btn]]
+
+    # اضافه کردن دکمه ادمین (Admin Panel) در ردیف بعدی
     if is_admin:
         admin_button = KeyboardButton(text=config.KEYBOARD_ADMIN_TEXTS[0])
-        keyboard_rows.append([admin_button]) 
-    
+        keyboard_rows.append([admin_button])
+
     return ReplyKeyboardMarkup(
         keyboard=keyboard_rows,
         resize_keyboard=True,
@@ -231,6 +232,20 @@ async def consent_decline(callback: types.CallbackQuery, state: FSMContext) -> N
         reply_markup=restart_kb
     )
     db.log("INFO", f"User {callback.from_user.id} declined terms.")
+
+
+@dp.message(F.text == config.SUPPORT_LABEL)
+async def support_button_handler(message: types.Message) -> None:
+    """Send support chat link as an inline URL button when user presses the support reply-keyboard button."""
+    try:
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="رفتن به پشتیبانی", url=config.SUPPORT_CHAT_LINK)]
+        ])
+        await message.answer("برای ارتباط با پشتیبانی روی دکمه زیر بزنید:", reply_markup=kb)
+        db.log("INFO", f"User {message.from_user.id} requested support link.")
+    except Exception as e:
+        db.log("ERROR", f"Failed to send support link to {message.from_user.id}: {e}")
+        await message.answer(f"ارتباط با پشتیبانی: {config.SUPPORT_CHAT_LINK}")
 
 # --- FSM هندلرهای رزومه (استفاده از توابع جدید کیبورد) ---
 
@@ -1186,11 +1201,13 @@ def create_reply_keyboard(texts: list, one_time: bool = False) -> ReplyKeyboardM
     return ReplyKeyboardMarkup(keyboard=keyboard_rows, resize_keyboard=True, one_time_keyboard=one_time)
 
 def get_main_keyboard(is_admin) -> ReplyKeyboardMarkup:
-    main_button = [KeyboardButton(text=config.KEYBOARD_MAIN_TEXTS[0])]
-    keyboard_rows = [main_button]
+    main_btn = KeyboardButton(text=config.KEYBOARD_MAIN_TEXTS[0])
+    support_btn = KeyboardButton(text=config.SUPPORT_LABEL)
+
+    keyboard_rows = [[main_btn, support_btn]]
     if is_admin:
         admin_button = KeyboardButton(text=config.KEYBOARD_ADMIN_TEXTS[0])
-        keyboard_rows.append([admin_button]) 
+        keyboard_rows.append([admin_button])
     return ReplyKeyboardMarkup(keyboard=keyboard_rows, resize_keyboard=True, input_field_placeholder="منوی اصلی...")
 
 def get_admin_main_keyboard() -> ReplyKeyboardMarkup:

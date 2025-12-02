@@ -30,7 +30,12 @@ if not ADMIN_IDS:
 ADMIN_ID = ADMIN_IDS[0]
 MAX_FILE_SIZE_MB = 200        
 MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
-#SUPPORT_ID = 
+# Support chat link / username (set in .env as SUPPORT_CHAT_LINK). If not provided,
+# default to the first admin's public t.me username placeholder (admins should set this).
+SUPPORT_CHAT_LINK = os.getenv("SUPPORT_CHAT_LINK") or os.getenv("SUPPORT") or f"https://t.me/{ADMIN_ID}"
+
+# Label shown on the main keyboard for contacting support
+SUPPORT_LABEL = os.getenv("SUPPORT_LABEL") or "پشتیبانی"
 
 # --- مسیرها ---
 DATABASE_NAME = "db.sqlite3"
