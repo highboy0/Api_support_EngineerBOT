@@ -117,10 +117,9 @@ KEYBOARD_SKILL_LEVEL = [["مبتدی", "متوسط", "پیشرفته"]]
 RESUME_FIELDS = [
     "full_name", "username", "study_status", "degree", "major", "field_university", "gpa",
     "location", "phone_main", "phone_emergency", "english_level", "skills", "work_history",
-    "job_position", "other_details", "training_request", "file_path", "register_date",
-    # membership-related fields
-    "has_membership", "membership_org", "membership_number", "membership_city",
-    "uploaded_files"
+    "job_position", "other_details", "training_request",
+    "has_work_license", "work_license_city", # فیلدهای جدید پروانه اشتغال
+    "file_path", "register_date", "uploaded_files"
 ]
 
 
@@ -145,12 +144,10 @@ FIELD_LABELS = {
     "other_details": "توضیحات دیگر",
     "training_request": "درخواست آموزش",
     "file_path": "مسیر نمونه‌کار",
-    "register_date": "تاریخ ثبت",
-    # membership-related (added for edit capability)
-    "has_membership": "عضویت سازمانی",
-    "membership_org": "نام سازمان/انجمن",
-    "membership_number": "شماره عضویت",
-    "membership_city": "شهر صدور عضویت",
+    "register_date": "تاریخ ثبت",    
+    # فیلدهای جدید پروانه اشتغال
+    "has_work_license": "پروانه اشتغال نظام مهندسی",
+    "work_license_city": "شهر صدور پروانه",
 }
 
 # نمایش فارسی ساختار رزومه بر اساس ترتیب `RESUME_FIELDS` (برای اکسپورت/نمایش)

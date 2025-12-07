@@ -64,10 +64,8 @@ class ResumeStates(StatesGroup):
     work_history = State()
     job_position = State()
     other_details = State()
-    has_membership = State()
-    membership_org = State()
-    membership_number = State()
-    membership_city = State()
+    has_work_license = State() # State جدید برای پروانه اشتغال
+    work_license_city = State() # State جدید برای شهر صدور پروانه
     confirm_resume = State()
     edit_field = State()
     edit_value = State()
@@ -289,8 +287,9 @@ async def process_full_name(message: types.Message, state: FSMContext) -> None:
 
     # If we are editing this single field, return to edit menu
     data = await state.get_data()
-    if data.get('edit_field_name') == 'full_name':
-        await finish_edit_and_show_menu(message.from_user.id, state)
+    # اگر در حال ویرایش هستیم، به منوی ویرایش برمی‌گردیم
+    if data.get('is_editing'):
+        await finish_single_edit(message, state)
         return
 
     await state.set_state(ResumeStates.study_status)
@@ -316,9 +315,10 @@ async def process_username(message: types.Message, state: FSMContext) -> None:
     await state.set_state(ResumeStates.full_name)
     await persist_state_to_db(message.from_user.id, state)
 
+    # اگر در حال ویرایش هستیم، به منوی ویرایش برمی‌گردیم
     data = await state.get_data()
-    if data.get('edit_field_name') == 'username':
-        await finish_edit_and_show_menu(message.from_user.id, state)
+    if data.get('is_editing'):
+        await finish_single_edit(message, state)
         return
 @dp.callback_query(F.data.startswith("study_status_"))
 async def process_study_status(callback: types.CallbackQuery, state: FSMContext) -> None:
@@ -332,8 +332,9 @@ async def process_study_status(callback: types.CallbackQuery, state: FSMContext)
     await state.update_data(study_status=status)
     await persist_state_to_db(callback.from_user.id, state)
     data = await state.get_data()
-    if data.get('edit_field_name') == 'study_status':
-        await finish_edit_and_show_menu(callback.from_user.id, state)
+    # اگر در حال ویرایش هستیم، به منوی ویرایش برمی‌گردیم
+    if data.get('is_editing'):
+        await finish_single_edit(callback.message, state)
         return
 
     await state.set_state(ResumeStates.degree)
@@ -356,8 +357,9 @@ async def process_degree(callback: types.CallbackQuery, state: FSMContext) -> No
     await state.update_data(degree=degree)
     await persist_state_to_db(callback.from_user.id, state)
     data = await state.get_data()
-    if data.get('edit_field_name') == 'degree':
-        await finish_edit_and_show_menu(callback.from_user.id, state)
+    # اگر در حال ویرایش هستیم، به منوی ویرایش برمی‌گردیم
+    if data.get('is_editing'):
+        await finish_single_edit(callback.message, state)
         return
 
     # اکنون رشته تحصیلی را از لیست انتخابی بپرس
@@ -382,9 +384,9 @@ async def process_field_university(message: types.Message, state: FSMContext) ->
     await state.update_data(field_university=message.text)
     user_data = await state.get_data()
     db.save_resume_data(message.from_user.id, user_data)
-    # if editing this field, return to edit menu
-    if user_data.get('edit_field_name') == 'field_university':
-        await finish_edit_and_show_menu(message.from_user.id, state)
+    # اگر در حال ویرایش هستیم، به منوی ویرایش برمی‌گردیم
+    if user_data.get('is_editing'):
+        await finish_single_edit(message, state)
         return
 
     await state.set_state(ResumeStates.gpa)
@@ -398,6 +400,7 @@ async def process_field_university(message: types.Message, state: FSMContext) ->
 async def process_major_callback(callback: types.CallbackQuery, state: FSMContext) -> None:
     """پردازش انتخاب رشته از طریق Inline keyboard و سپس درخواست نام آخرین محل تحصیل."""
     await callback.answer()
+    major = callback.data[len("major_"):]
     # edit the originating message to indicate the selection and remove inline buttons
     try:
         await callback.message.edit_text(f"✅ رشته انتخاب شد: {major}")
@@ -406,13 +409,14 @@ async def process_major_callback(callback: types.CallbackQuery, state: FSMContex
             await callback.message.edit_reply_markup(reply_markup=None)
         except Exception:
             pass
-    major = callback.data[len("major_"):]
+    
     await state.update_data(major=major)
     await persist_state_to_db(callback.from_user.id, state)
 
     data = await state.get_data()
-    if data.get('edit_field_name') == 'major':
-        await finish_edit_and_show_menu(callback.from_user.id, state)
+    # اگر در حال ویرایش هستیم، به منوی ویرایش برمی‌گردیم
+    if data.get('is_editing'):
+        await finish_single_edit(callback.message, state)
         return
 
     await state.set_state(ResumeStates.field_university)
@@ -435,8 +439,9 @@ async def process_gpa(message: types.Message, state: FSMContext) -> None:
     await state.update_data(gpa=str(gpa))
     await persist_state_to_db(message.from_user.id, state)
     data = await state.get_data()
-    if data.get('edit_field_name') == 'gpa':
-        await finish_edit_and_show_menu(message.from_user.id, state)
+    # اگر در حال ویرایش هستیم، به منوی ویرایش برمی‌گردیم
+    if data.get('is_editing'):
+        await finish_single_edit(message, state)
         return
 
     await state.set_state(ResumeStates.location)
@@ -460,8 +465,9 @@ async def process_location(message: types.Message, state: FSMContext) -> None:
     await state.update_data(location=message.text)
     await persist_state_to_db(message.from_user.id, state)
     data = await state.get_data()
-    if data.get('edit_field_name') == 'location':
-        await finish_edit_and_show_menu(message.from_user.id, state)
+    # اگر در حال ویرایش هستیم، به منوی ویرایش برمی‌گردیم
+    if data.get('is_editing'):
+        await finish_single_edit(message, state)
         return
 
     await state.set_state(ResumeStates.phone_main)
@@ -482,8 +488,9 @@ async def process_phone_main(message: types.Message, state: FSMContext) -> None:
     await state.update_data(phone_main=message.text.strip())
     await persist_state_to_db(message.from_user.id, state)
     data = await state.get_data()
-    if data.get('edit_field_name') == 'phone_main':
-        await finish_edit_and_show_menu(message.from_user.id, state)
+    # اگر در حال ویرایش هستیم، به منوی ویرایش برمی‌گردیم
+    if data.get('is_editing'):
+        await finish_single_edit(message, state)
         return
 
     await state.set_state(ResumeStates.phone_emergency)
@@ -503,8 +510,9 @@ async def process_phone_emergency(message: types.Message, state: FSMContext) -> 
     await state.update_data(phone_emergency=message.text.strip())
     await persist_state_to_db(message.from_user.id, state)
     data = await state.get_data()
-    if data.get('edit_field_name') == 'phone_emergency':
-        await finish_edit_and_show_menu(message.from_user.id, state)
+    # اگر در حال ویرایش هستیم، به منوی ویرایش برمی‌گردیم
+    if data.get('is_editing'):
+        await finish_single_edit(message, state)
         return
 
     await state.update_data(skills=[]) # آماده‌سازی لیست مهارت‌ها
@@ -523,12 +531,13 @@ async def process_phone_emergency(message: types.Message, state: FSMContext) -> 
 async def process_skill_selection(callback: types.CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
     # edit the originating message to indicate the selection and remove inline buttons
-    skill_action = callback.data[len("skill_"):]
+    skill_action = callback.data[len("skill_"):] # امن‌تر کردن پارس کردن callback data: بقیه رشته بعد از پیش‌وند را بگیریم
+
     try:
         if skill_action == "continue":
             await callback.message.edit_text("⏭️ ادامه به مرحله آپلود نمونه‌کار انتخاب شد.")
         else:
-            display_skill = skill_action if skill_action != "سایر مهارت‌ها" else "سایر"
+            display_skill = "سایر" if skill_action == "سایر مهارت‌ها" else skill_action
             await callback.message.edit_text(f"✅ مهارت انتخاب شد: {display_skill}")
     except Exception:
         try:
@@ -536,14 +545,13 @@ async def process_skill_selection(callback: types.CallbackQuery, state: FSMConte
         except Exception:
             pass
     # امن‌تر کردن پارس کردن callback data: بقیه رشته بعد از پیش‌وند را بگیریم
-    
     if skill_action == "continue":
         user_data = await state.get_data()
         db.save_resume_data(callback.from_user.id, user_data)
         data = await state.get_data()
-        # if editing skills, return to edit menu
-        if data.get('edit_field_name') == 'skills':
-            await finish_edit_and_show_menu(callback.from_user.id, state)
+        # اگر در حال ویرایش هستیم، به منوی ویرایش برمی‌گردیم
+        if data.get('is_editing'):
+            await finish_single_edit(callback.message, state)
             return
 
         await state.set_state(ResumeStates.work_sample_upload)
@@ -594,6 +602,7 @@ async def process_skill_level_selection(callback: types.CallbackQuery, state: FS
         # we'll attempt to show a compact confirmation on the source message
         payload_preview = callback.data[len("level_"):]
         skill_name_preview, _, level_preview = payload_preview.rpartition('_')
+
         if not level_preview:
             await callback.message.edit_reply_markup(reply_markup=None)
         else:
@@ -650,6 +659,7 @@ async def process_skill_level_selection(callback: types.CallbackQuery, state: FS
 async def process_english_level(callback: types.CallbackQuery, state: FSMContext) -> None:
     """پردازش انتخاب میزان تسلط انگلیسی و ادامه به مرحله مهارت‌ها"""
     await callback.answer()
+    level = callback.data[len("english_"):]
     # edit source message to indicate chosen english level and remove inline buttons
     try:
         await callback.message.edit_text(f"✅ سطح زبان انگلیسی انتخاب شد: {level}")
@@ -658,13 +668,13 @@ async def process_english_level(callback: types.CallbackQuery, state: FSMContext
             await callback.message.edit_reply_markup(reply_markup=None)
         except Exception:
             pass
-    level = callback.data[len("english_"):]
     await state.update_data(english_level=level)
     await persist_state_to_db(callback.from_user.id, state)
 
     data = await state.get_data()
-    if data.get('edit_field_name') == 'english_level':
-        await finish_edit_and_show_menu(callback.from_user.id, state)
+    # اگر در حال ویرایش هستیم، به منوی ویرایش برمی‌گردیم
+    if data.get('is_editing'):
+        await finish_single_edit(callback.message, state)
         return
 
     await state.set_state(ResumeStates.skills_start)
@@ -793,8 +803,9 @@ async def process_work_history_yes(message: types.Message, state: FSMContext) ->
     await state.update_data(work_history="دارم")
     await persist_state_to_db(message.from_user.id, state)
     data = await state.get_data()
-    if data.get('edit_field_name') == 'work_history':
-        await finish_edit_and_show_menu(message.from_user.id, state)
+    # اگر در حال ویرایش هستیم، به منوی ویرایش برمی‌گردیم
+    if data.get('is_editing'):
+        await finish_single_edit(message, state)
         return
 
     await state.set_state(ResumeStates.job_position) 
@@ -809,8 +820,9 @@ async def process_work_history_no(message: types.Message, state: FSMContext) -> 
     await state.update_data(work_history="ندارم")
     await persist_state_to_db(message.from_user.id, state)
     data = await state.get_data()
-    if data.get('edit_field_name') == 'work_history':
-        await finish_edit_and_show_menu(message.from_user.id, state)
+    # اگر در حال ویرایش هستیم، به منوی ویرایش برمی‌گردیم
+    if data.get('is_editing'):
+        await finish_single_edit(message, state)
         return
 
     await state.set_state(ResumeStates.job_position)
@@ -842,8 +854,9 @@ async def process_job_position(message: types.Message, state: FSMContext) -> Non
     await state.update_data(job_position=message.text)
     user_data = await state.get_data()
     db.save_resume_data(message.from_user.id, user_data)
-    if user_data.get('edit_field_name') == 'job_position':
-        await finish_edit_and_show_menu(message.from_user.id, state)
+    # اگر در حال ویرایش هستیم، به منوی ویرایش برمی‌گردیم
+    if user_data.get('is_editing'):
+        await finish_single_edit(message, state)
         return
 
     await state.set_state(ResumeStates.other_details)
@@ -860,11 +873,11 @@ async def process_other_details(message: types.Message, state: FSMContext) -> No
         await state.update_data(other_details=None)
         user_data = await state.get_data()
         db.save_resume_data(message.from_user.id, user_data)
-        # proceed to membership question
-        await state.set_state(ResumeStates.has_membership)
+        # رفتن به مرحله جدید: پروانه اشتغال
+        await state.set_state(ResumeStates.has_work_license)
         await message.answer(
-            "**۱۵. عضویت سازمانی (اختیاری)**\n"
-            "آیا عضو انجمن/شورای مهندسی یا سازمان مشابه هستید؟ (بله/خیر)",
+            "**۱۵. پروانه اشتغال (اختیاری)**\n"
+            "آیا پروانه اشتغال به کار سازمان نظام مهندسی ساختمان دارید؟",
             reply_markup=create_reply_keyboard(["بله", "خیر"]) 
         )
         return
@@ -872,58 +885,49 @@ async def process_other_details(message: types.Message, state: FSMContext) -> No
     await state.update_data(other_details=message.text)
     user_data = await state.get_data()
     db.save_resume_data(message.from_user.id, user_data)
-    # If user was editing this single field, return to edit menu immediately
-    if user_data.get('edit_field_name') == 'other_details':
-        await finish_edit_and_show_menu(message.from_user.id, state)
+    # اگر در حال ویرایش هستیم، به منوی ویرایش برمی‌گردیم
+    if user_data.get('is_editing'):
+        await finish_single_edit(message, state)
         return
 
-    # مسیر جدید: ابتدا بپرسیم آیا عضو انجمن/سند مهندسی هستید.
-    await state.set_state(ResumeStates.has_membership)
+    # مسیر جدید: سؤال در مورد پروانه اشتغال
+    await state.set_state(ResumeStates.has_work_license)
     await message.answer(
-        "**۱۵. عضویت سازمانی (اختیاری)**\n"
-        "آیا عضو انجمن/شورای مهندسی یا سازمان مشابه هستید؟ (بله/خیر)",
+        "**۱۵. پروانه اشتغال (اختیاری)**\n"
+        "آیا پروانه اشتغال به کار سازمان نظام مهندسی ساختمان دارید؟",
         reply_markup=create_reply_keyboard(["بله", "خیر"]) 
     )
 
-# --- هندلرها برای عضویت سازمانی و تأیید نهایی رزومه ---
+# --- هندلرهای جدید برای پروانه اشتغال ---
 
-@dp.message(ResumeStates.has_membership, F.text.in_(["بله", "خیر"]))
-async def process_has_membership(message: types.Message, state: FSMContext) -> None:
+@dp.message(ResumeStates.has_work_license, F.text.in_(["بله", "خیر"]))
+async def process_has_work_license(message: types.Message, state: FSMContext) -> None:
     if message.text == "بله":
-        await state.update_data(has_membership="بله")
-        await state.set_state(ResumeStates.membership_org)
-        await message.answer("لطفاً نام سازمان/انجمن یا مرجع صدور را وارد کنید:", reply_markup=types.ReplyKeyboardRemove())
+        await state.update_data(has_work_license="بله")
+        await state.set_state(ResumeStates.work_license_city)
+        await message.answer("لطفاً شهر یا محل صدور پروانه را وارد کنید:", reply_markup=types.ReplyKeyboardRemove())
         return
 
-    # در صورت عدم عضویت، به سوال درخواست آموزش می‌رویم
-    await state.update_data(has_membership="خیر")
+    # اگر پاسخ "خیر" بود یا در حال ویرایش بودیم و "خیر" انتخاب شد
+    await state.update_data(has_work_license="خیر", work_license_city=None) # شهر را پاک می‌کنیم
+    await persist_state_to_db(message.from_user.id, state)
+
+    # اگر در حال ویرایش هستیم، به منوی ویرایش برمی‌گردیم
+    data = await state.get_data()
+    if data.get('is_editing'):
+        await finish_single_edit(message, state)
+        return
+
+    # در غیر این صورت، به مرحله بعد (درخواست آموزش) می‌رویم
     await state.set_state(ResumeStates.training_request)
     await message.answer(
         "**۱۴. درخواست آموزش**\n"
         "آیا تمایل به شرکت در دوره‌های آموزشی مرتبط دارید؟",
         reply_markup=create_reply_keyboard(config.KEYBOARD_TRAINING_REQUEST_TEXTS)
     )
-
-
-@dp.message(ResumeStates.membership_org)
-async def process_membership_org(message: types.Message, state: FSMContext) -> None:
-    await state.update_data(membership_org=message.text)
-    await persist_state_to_db(message.from_user.id, state)
-    await state.set_state(ResumeStates.membership_number)
-    await message.answer("لطفاً شماره عضویت یا مرجع ثبت (در صورت وجود) را وارد کنید (یا 'ندارم' بنویسید):")
-
-
-@dp.message(ResumeStates.membership_number)
-async def process_membership_number(message: types.Message, state: FSMContext) -> None:
-    await state.update_data(membership_number=message.text)
-    await persist_state_to_db(message.from_user.id, state)
-    await state.set_state(ResumeStates.membership_city)
-    await message.answer("لطفاً شهر یا محل صدور عضویت را وارد کنید (در صورت وجود):")
-
-
-@dp.message(ResumeStates.membership_city)
-async def process_membership_city(message: types.Message, state: FSMContext) -> None:
-    await state.update_data(membership_city=message.text)
+@dp.message(ResumeStates.work_license_city)
+async def process_work_license_city(message: types.Message, state: FSMContext) -> None:
+    await state.update_data(work_license_city=message.text)
     await persist_state_to_db(message.from_user.id, state)
     # بعد از عضویت، به سوال درخواست آموزش می‌رویم
     await state.set_state(ResumeStates.training_request)
@@ -932,6 +936,12 @@ async def process_membership_city(message: types.Message, state: FSMContext) -> 
         "آیا تمایل به شرکت در دوره‌های آموزشی مرتبط دارید؟",
         reply_markup=create_reply_keyboard(config.KEYBOARD_TRAINING_REQUEST_TEXTS)
     )
+
+    # اگر در حال ویرایش هستیم، به منوی ویرایش برمی‌گردیم
+    data = await state.get_data()
+    if data.get('is_editing'):
+        await finish_single_edit(message, state)
+        return
 
 
 def get_confirmation_keyboard() -> InlineKeyboardMarkup:
@@ -943,14 +953,15 @@ def get_confirmation_keyboard() -> InlineKeyboardMarkup:
     ])
 
 
-async def finish_edit_and_show_menu(chat_id: int, state: FSMContext) -> None:
-    """Helper: clear edit_field_name and show the edit menu again."""
+async def finish_single_edit(message: types.Message, state: FSMContext) -> None:
+    """Helper: پس از ویرایش یک فیلد، به منوی انتخاب فیلد بازمی‌گردد."""
     try:
-        await state.update_data(edit_field_name=None)
+        # پاک کردن فلگ‌ها و بازگشت به منوی ویرایش
+        await state.update_data(is_editing=True, edit_field_name=None)
         await state.set_state(ResumeStates.edit_field)
-        await bot.send_message(chat_id, "ویرایش انجام شد. فیلد دیگری می‌خواهید ویرایش کنید؟", reply_markup=get_edit_fields_keyboard())
+        await message.answer("✅ ویرایش انجام شد. برای ویرایش فیلد دیگر، آن را انتخاب کنید یا روی 'تایید ویرایش' بزنید.", reply_markup=get_edit_fields_keyboard())
     except Exception as e:
-        db.log("ERROR", f"finish_edit_and_show_menu failed: {e}")
+        db.log("ERROR", f"finish_single_edit failed: {e}")
 
 
 def get_edit_fields_keyboard() -> ReplyKeyboardMarkup:
@@ -984,6 +995,12 @@ def get_edit_fields_keyboard() -> ReplyKeyboardMarkup:
 async def process_training_request(message: types.Message, state: FSMContext) -> None:
     await state.update_data(training_request=message.text)
     await persist_state_to_db(message.from_user.id, state)
+
+    # اگر در حال ویرایش هستیم، به منوی ویرایش برمی‌گردیم
+    data = await state.get_data()
+    if data.get('is_editing'):
+        await finish_single_edit(message, state)
+        return
 
     user_data = await state.get_data()
     user_data['user_id'] = message.from_user.id
@@ -1030,6 +1047,8 @@ async def callback_edit_resume(callback: types.CallbackQuery, state: FSMContext)
             await callback.message.edit_reply_markup(reply_markup=None)
         except Exception:
             pass
+    # فلگ ویرایش را برای شروع فرآیند ویرایش تنظیم می‌کنیم
+    await state.update_data(is_editing=True)
     await state.set_state(ResumeStates.edit_field)
     await bot.send_message(callback.from_user.id, "لطفاً فیلد موردنظر برای ویرایش را انتخاب کنید:", reply_markup=get_edit_fields_keyboard())
 
@@ -1048,7 +1067,7 @@ async def handle_edit_field(message: types.Message, state: FSMContext) -> None:
     if text == "تایید ویرایش":
         # Finalize edits and show profile/preview to the user
         await persist_state_to_db(message.from_user.id, state)
-        await state.update_data(edit_field_name=None)
+        await state.update_data(is_editing=None, edit_field_name=None) # پاک کردن فلگ‌ها
         user_data = await state.get_data()
         user_data['user_id'] = message.from_user.id
         await state.set_state(ResumeStates.confirm_resume)
@@ -1086,11 +1105,9 @@ async def handle_edit_field(message: types.Message, state: FSMContext) -> None:
         'work_history': (ResumeStates.work_history, "آیا سابقه کار مرتبط دارید؟", create_reply_keyboard(config.KEYBOARD_WORK_HISTORY_TEXTS)),
         'job_position': (ResumeStates.job_position, "لطفاً جایگاه شغلی مدنظر خود را انتخاب کنید.", create_reply_keyboard(config.KEYBOARD_JOB_POSITION_TEXTS)),
         'other_details': (ResumeStates.other_details, "در صورت داشتن توضیحات دیگر، لطفاً وارد کنید:", types.ReplyKeyboardRemove()),
-        'training_request': (ResumeStates.training_request, "آیا تمایل به شرکت در دوره‌های آموزشی مرتبط دارید؟", create_reply_keyboard(config.KEYBOARD_TRAINING_REQUEST_TEXTS)),
-        'has_membership': (ResumeStates.has_membership, "آیا عضو انجمن/شورای مهندسی یا سازمان مشابه هستید؟ (بله/خیر)", create_reply_keyboard(["بله", "خیر"])),
-        'membership_org': (ResumeStates.membership_org, "لطفاً نام سازمان/انجمن یا مرجع صدور را وارد کنید:", types.ReplyKeyboardRemove()),
-        'membership_number': (ResumeStates.membership_number, "لطفاً شماره عضویت یا مرجع ثبت (در صورت وجود) را وارد کنید (یا 'ندارم'):", types.ReplyKeyboardRemove()),
-        'membership_city': (ResumeStates.membership_city, "لطفاً شهر یا محل صدور عضویت را وارد کنید (در صورت وجود):", types.ReplyKeyboardRemove()),
+        'training_request': (ResumeStates.training_request, "آیا تمایل به شرکت در دوره‌های آموزشی مرتبط دارید؟", create_reply_keyboard(config.KEYBOARD_TRAINING_REQUEST_TEXTS)),        
+        'has_work_license': (ResumeStates.has_work_license, "آیا پروانه اشتغال به کار سازمان نظام مهندسی ساختمان دارید؟", create_reply_keyboard(["بله", "خیر"])),
+        'work_license_city': (ResumeStates.work_license_city, "لطفاً شهر یا محل صدور پروانه را وارد کنید:", types.ReplyKeyboardRemove()),
     }
 
     if selected_key in EDIT_DISPATCH:
@@ -1117,11 +1134,8 @@ async def handle_edit_value(message: types.Message, state: FSMContext) -> None:
     await state.update_data(**{field: new_value})
     await persist_state_to_db(message.from_user.id, state)
 
-    # بازگشت به پیش‌نمایش برای تایید نهایی
-    user_data = await state.get_data()
-    await state.set_state(ResumeStates.confirm_resume)
-    await message.answer("مقدار با موفقیت بروزرسانی شد. پیش‌نمایش جدید: ")
-    await message.answer(format_resume_data(user_data), reply_markup=get_confirmation_keyboard(), parse_mode=ParseMode.HTML)
+    # بازگشت به منوی ویرایش
+    await finish_single_edit(message, state)
 
 # ... (ادامه کد: توابع notify_admin و هندلرهای ادمین) ...
 @dp.message(F.text == "🏠 منوی اصلی")
