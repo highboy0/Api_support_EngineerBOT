@@ -96,7 +96,7 @@ ADMIN_NOTIFICATION_TEMPLATE = (
 )
 
 # --- لیست‌های متنی کیبوردها (Text Lists) ---
-KEYBOARD_MAIN_TEXTS = ["📄 ارسال رزومه"]
+KEYBOARD_MAIN_TEXTS = ["📄 ساختن رزومه"]
 KEYBOARD_ADMIN_TEXTS = ["⚙️ پنل ادمین"]
 KEYBOARD_STUDY_STATUS_TEXTS = ["فارغ‌التحصیل", "در حال تحصیل"]
 KEYBOARD_DEGREE_TEXTS = ["کاردانی", "کارشناسی", "ارشد", "دکتری"]

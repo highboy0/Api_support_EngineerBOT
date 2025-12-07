@@ -1069,105 +1069,38 @@ async def handle_edit_field(message: types.Message, state: FSMContext) -> None:
 
     await state.update_data(edit_field_name=selected_key)
 
-    # Route user to the appropriate handler state and send the same prompt
-    if selected_key == 'full_name':
-        await state.set_state(ResumeStates.full_name)
-        await message.answer("لطفاً نام و نام خانوادگی خود را وارد کنید (مثال: علی رضایی)", reply_markup=types.ReplyKeyboardRemove())
-        return
+    # Refactor: Use a dispatch dictionary to avoid long if/elif chains
+    # This makes the code cleaner, more maintainable, and easier to extend.
+    EDIT_DISPATCH = {
+        'full_name': (ResumeStates.full_name, "لطفاً نام و نام خانوادگی خود را وارد کنید (مثال: علی رضایی)", types.ReplyKeyboardRemove()),
+        'username': (ResumeStates.username, "لطفاً آیدی تلگرام خود را وارد کنید (مثال: @alirezaei)", types.ReplyKeyboardRemove()),
+        'study_status': (ResumeStates.study_status, "لطفاً وضعیت تحصیلی خود را انتخاب کنید.", get_study_status_keyboard()),
+        'degree': (ResumeStates.degree, "لطفاً مقطع تحصیلی خود را انتخاب کنید.", get_degree_keyboard()),
+        'major': (ResumeStates.major, "لطفاً رشته تحصیلی خود را انتخاب کنید.", get_major_keyboard()),
+        'field_university': (ResumeStates.field_university, "لطفاً نام دانشگاه یا مؤسسه آموزشی آخرین محل تحصیل خود را وارد کنید:", types.ReplyKeyboardRemove()),
+        'gpa': (ResumeStates.gpa, "لطفاً معدل کل خود را وارد کنید (فقط عدد، اعشاری مجاز است).", types.ReplyKeyboardRemove()),
+        'location': (ResumeStates.location, "لطفاً شهر و آدرس دقیق محل سکونت خود را وارد کنید:", types.ReplyKeyboardRemove()),
+        'phone_main': (ResumeStates.phone_main, "لطفاً شماره تلفن همراه ۱۱ رقمی خود را وارد کنید (شروع با 09).", types.ReplyKeyboardRemove()),
+        'phone_emergency': (ResumeStates.phone_emergency, "لطفاً شماره تماس اضطراری ۱۱ رقمی را وارد کنید (شروع با 09).", types.ReplyKeyboardRemove()),
+        'english_level': (ResumeStates.english_level, "لطفاً میزان تسلط خود به زبان انگلیسی را انتخاب کنید:", get_english_level_keyboard()),
+        'work_history': (ResumeStates.work_history, "آیا سابقه کار مرتبط دارید؟", create_reply_keyboard(config.KEYBOARD_WORK_HISTORY_TEXTS)),
+        'job_position': (ResumeStates.job_position, "لطفاً جایگاه شغلی مدنظر خود را انتخاب کنید.", create_reply_keyboard(config.KEYBOARD_JOB_POSITION_TEXTS)),
+        'other_details': (ResumeStates.other_details, "در صورت داشتن توضیحات دیگر، لطفاً وارد کنید:", types.ReplyKeyboardRemove()),
+        'training_request': (ResumeStates.training_request, "آیا تمایل به شرکت در دوره‌های آموزشی مرتبط دارید؟", create_reply_keyboard(config.KEYBOARD_TRAINING_REQUEST_TEXTS)),
+        'has_membership': (ResumeStates.has_membership, "آیا عضو انجمن/شورای مهندسی یا سازمان مشابه هستید؟ (بله/خیر)", create_reply_keyboard(["بله", "خیر"])),
+        'membership_org': (ResumeStates.membership_org, "لطفاً نام سازمان/انجمن یا مرجع صدور را وارد کنید:", types.ReplyKeyboardRemove()),
+        'membership_number': (ResumeStates.membership_number, "لطفاً شماره عضویت یا مرجع ثبت (در صورت وجود) را وارد کنید (یا 'ندارم'):", types.ReplyKeyboardRemove()),
+        'membership_city': (ResumeStates.membership_city, "لطفاً شهر یا محل صدور عضویت را وارد کنید (در صورت وجود):", types.ReplyKeyboardRemove()),
+    }
 
-    if selected_key == 'username':
-        await state.set_state(ResumeStates.username)
-        await message.answer("لطفاً آیدی تلگرام خود را وارد کنید (مثال: @alirezaei)", reply_markup=types.ReplyKeyboardRemove())
-        return
-
-    if selected_key == 'study_status':
-        await state.set_state(ResumeStates.study_status)
-        await message.answer("لطفاً وضعیت تحصیلی خود را انتخاب کنید.", reply_markup=create_reply_keyboard(config.KEYBOARD_STUDY_STATUS_TEXTS))
-        return
-
-    if selected_key == 'degree':
-        await state.set_state(ResumeStates.degree)
-        await message.answer("لطفاً مقطع تحصیلی خود را انتخاب کنید.", reply_markup=get_degree_keyboard())
-        return
-
-    if selected_key == 'major':
-        await state.set_state(ResumeStates.major)
-        await message.answer("لطفاً رشته تحصیلی خود را انتخاب کنید.", reply_markup=get_major_keyboard())
-        return
-
-    if selected_key == 'field_university':
-        await state.set_state(ResumeStates.field_university)
-        await message.answer("لطفاً نام دانشگاه یا مؤسسه آموزشی آخرین محل تحصیل خود را وارد کنید:", reply_markup=types.ReplyKeyboardRemove())
-        return
-
-    if selected_key == 'gpa':
-        await state.set_state(ResumeStates.gpa)
-        await message.answer("لطفاً معدل کل خود را وارد کنید (فقط عدد، اعشاری مجاز است).", reply_markup=types.ReplyKeyboardRemove())
-        return
-
-    if selected_key == 'location':
-        await state.set_state(ResumeStates.location)
-        await message.answer("لطفاً شهر و آدرس دقیق محل سکونت خود را وارد کنید:", reply_markup=types.ReplyKeyboardRemove())
-        return
-
-    if selected_key == 'phone_main':
-        await state.set_state(ResumeStates.phone_main)
-        await message.answer("لطفاً شماره تلفن همراه ۱۱ رقمی خود را وارد کنید (شروع با 09).", reply_markup=types.ReplyKeyboardRemove())
-        return
-
-    if selected_key == 'phone_emergency':
-        await state.set_state(ResumeStates.phone_emergency)
-        await message.answer("لطفاً شماره تماس اضطراری ۱۱ رقمی را وارد کنید (شروع با 09).", reply_markup=types.ReplyKeyboardRemove())
-        return
-
-    if selected_key == 'english_level':
-        await state.set_state(ResumeStates.english_level)
-        await message.answer("لطفاً میزان تسلط خود به زبان انگلیسی را انتخاب کنید:", reply_markup=get_english_level_keyboard())
-        return
-
-    if selected_key == 'work_history':
-        await state.set_state(ResumeStates.work_history)
-        await message.answer("آیا سابقه کار مرتبط دارید؟", reply_markup=create_reply_keyboard(config.KEYBOARD_WORK_HISTORY_TEXTS))
-        return
-
-    if selected_key == 'job_position':
-        await state.set_state(ResumeStates.job_position)
-        await message.answer("لطفاً جایگاه شغلی مدنظر خود را انتخاب کنید.", reply_markup=create_reply_keyboard(config.KEYBOARD_JOB_POSITION_TEXTS))
-        return
-
-    if selected_key == 'other_details':
-        await state.set_state(ResumeStates.other_details)
-        await message.answer("در صورت داشتن توضیحات دیگر، لطفاً وارد کنید:", reply_markup=types.ReplyKeyboardRemove())
-        return
-
-    if selected_key == 'training_request':
-        await state.set_state(ResumeStates.training_request)
-        await message.answer("آیا تمایل به شرکت در دوره‌های آموزشی مرتبط دارید؟", reply_markup=create_reply_keyboard(config.KEYBOARD_TRAINING_REQUEST_TEXTS))
-        return
-
-    # membership related
-    if selected_key in ('membership_org', 'membership_number', 'membership_city', 'has_membership'):
-        # route to membership prompts
-        if selected_key == 'has_membership':
-            await state.set_state(ResumeStates.has_membership)
-            await message.answer("آیا عضو انجمن/شورای مهندسی یا سازمان مشابه هستید؟ (بله/خیر)", reply_markup=create_reply_keyboard(["بله", "خیر"]))
-            return
-        if selected_key == 'membership_org':
-            await state.set_state(ResumeStates.membership_org)
-            await message.answer("لطفاً نام سازمان/انجمن یا مرجع صدور را وارد کنید:")
-            return
-        if selected_key == 'membership_number':
-            await state.set_state(ResumeStates.membership_number)
-            await message.answer("لطفاً شماره عضویت یا مرجع ثبت (در صورت وجود) را وارد کنید (یا 'ندارم'):")
-            return
-        if selected_key == 'membership_city':
-            await state.set_state(ResumeStates.membership_city)
-            await message.answer("لطفاً شهر یا محل صدور عضویت را وارد کنید (در صورت وجود):")
-            return
-
-    # Fallback: ask for a free-text value
-    await state.set_state(ResumeStates.edit_value)
-    await message.answer(f"لطفاً مقدار جدید برای فیلد **{text}** را وارد کنید:", reply_markup=types.ReplyKeyboardRemove())
+    if selected_key in EDIT_DISPATCH:
+        target_state, prompt_text, reply_markup = EDIT_DISPATCH[selected_key]
+        await state.set_state(target_state)
+        await message.answer(prompt_text, reply_markup=reply_markup)
+    else:
+        # Fallback for fields not in the dispatch map (e.g., skills)
+        await state.set_state(ResumeStates.edit_value)
+        await message.answer(f"لطفاً مقدار جدید برای فیلد **{text}** را وارد کنید:", reply_markup=types.ReplyKeyboardRemove())
 
 
 @dp.message(ResumeStates.edit_value)
