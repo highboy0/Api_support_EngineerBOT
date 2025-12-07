@@ -151,7 +151,6 @@ FIELD_LABELS = {
     "membership_org": "نام سازمان/انجمن",
     "membership_number": "شماره عضویت",
     "membership_city": "شهر صدور عضویت",
-    "uploaded_files": "فایل‌های آپلود شده"
 }
 
 # نمایش فارسی ساختار رزومه بر اساس ترتیب `RESUME_FIELDS` (برای اکسپورت/نمایش)

@@ -14,6 +14,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup 
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile, KeyboardButton, ReplyKeyboardMarkup
 from aiogram.client.default import DefaultBotProperties # برای رفع خطای TypeError در تعریف Bot
+from aiogram.utils.markdown import markdown_decoration
 
 # --- ایمپورت‌های محلی ---
 import config 
@@ -153,6 +154,28 @@ def get_major_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=kb)
 
 
+def get_study_status_keyboard() -> InlineKeyboardMarkup:
+    """کیبورد شیشه‌ای برای انتخاب وضعیت تحصیلی."""
+    kb = [
+        [InlineKeyboardButton(text=status, callback_data=f"study_status_{status}")]
+        for status in config.KEYBOARD_STUDY_STATUS_TEXTS
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=kb)
+
+
+def get_degree_keyboard() -> InlineKeyboardMarkup:
+    """کیبورد شیشه‌ای برای انتخاب مقطع تحصیلی."""
+    kb = []
+    row = []
+    for degree in config.KEYBOARD_DEGREE_TEXTS:
+        row.append(InlineKeyboardButton(text=degree, callback_data=f"degree_{degree}"))
+        if len(row) >= 2:
+            kb.append(row)
+            row = []
+    if row:
+        kb.append(row)
+    return InlineKeyboardMarkup(inline_keyboard=kb)
+
 def get_consent_keyboard() -> InlineKeyboardMarkup:
     """کیبورد درخواست تایید شرایط: دو دکمه پذیرش یا عدم پذیرش به صورت شیشه‌ای (Inline)."""
     kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -274,7 +297,7 @@ async def process_full_name(message: types.Message, state: FSMContext) -> None:
     await message.answer(
         "**۲. وضعیت تحصیلی**\n"
         "لطفاً وضعیت تحصیلی خود را انتخاب کنید.",
-        reply_markup=create_reply_keyboard(config.KEYBOARD_STUDY_STATUS_TEXTS)
+        reply_markup=get_study_status_keyboard()
     )
 
 
@@ -297,35 +320,50 @@ async def process_username(message: types.Message, state: FSMContext) -> None:
     if data.get('edit_field_name') == 'username':
         await finish_edit_and_show_menu(message.from_user.id, state)
         return
+@dp.callback_query(F.data.startswith("study_status_"))
+async def process_study_status(callback: types.CallbackQuery, state: FSMContext) -> None:
+    await callback.answer()
+    status = callback.data[len("study_status_"):]
+    try:
+        await callback.message.edit_text(f"✅ وضعیت تحصیلی انتخاب شد: {status}")
+    except Exception:
+        pass
 
-@dp.message(ResumeStates.study_status, F.text.in_(config.KEYBOARD_STUDY_STATUS_TEXTS))
-async def process_study_status(message: types.Message, state: FSMContext) -> None:
-    await state.update_data(study_status=message.text)
-    await persist_state_to_db(message.from_user.id, state)
+    await state.update_data(study_status=status)
+    await persist_state_to_db(callback.from_user.id, state)
     data = await state.get_data()
     if data.get('edit_field_name') == 'study_status':
-        await finish_edit_and_show_menu(message.from_user.id, state)
+        await finish_edit_and_show_menu(callback.from_user.id, state)
         return
 
     await state.set_state(ResumeStates.degree)
-    await message.answer(
+    await bot.send_message(
+        callback.from_user.id,
         "**۳. مقطع تحصیلی**\n"
         "لطفاً مقطع تحصیلی خود را انتخاب کنید.",
-        reply_markup=create_reply_keyboard(config.KEYBOARD_DEGREE_TEXTS)
+        reply_markup=get_degree_keyboard()
     )
 
-@dp.message(ResumeStates.degree, F.text.in_(config.KEYBOARD_DEGREE_TEXTS))
-async def process_degree(message: types.Message, state: FSMContext) -> None:
-    await state.update_data(degree=message.text)
-    await persist_state_to_db(message.from_user.id, state)
+@dp.callback_query(F.data.startswith("degree_"))
+async def process_degree(callback: types.CallbackQuery, state: FSMContext) -> None:
+    await callback.answer()
+    degree = callback.data[len("degree_"):]
+    try:
+        await callback.message.edit_text(f"✅ مقطع تحصیلی انتخاب شد: {degree}")
+    except Exception:
+        pass
+
+    await state.update_data(degree=degree)
+    await persist_state_to_db(callback.from_user.id, state)
     data = await state.get_data()
     if data.get('edit_field_name') == 'degree':
-        await finish_edit_and_show_menu(message.from_user.id, state)
+        await finish_edit_and_show_menu(callback.from_user.id, state)
         return
 
     # اکنون رشته تحصیلی را از لیست انتخابی بپرس
     await state.set_state(ResumeStates.major)
-    await message.answer(
+    await bot.send_message(
+        callback.from_user.id,
         "**۴. رشته تحصیلی**\n"
         "لطفاً رشته تحصیلی خود را انتخاب کنید.\n\n"
         "نکته: پس از انتخاب رشته، لطفاً نام دانشگاه یا مؤسسه آموزشی آخرین محل تحصیل را وارد کنید.",
@@ -333,23 +371,10 @@ async def process_degree(message: types.Message, state: FSMContext) -> None:
     )
 
 # bot.py (بخش هندلرهای FSM)
-
-# ... (ادامه هندلرهای قبلی) ...
-
-@dp.message(ResumeStates.degree, F.text.in_(config.KEYBOARD_DEGREE_TEXTS))
-async def process_degree(message: types.Message, state: FSMContext) -> None:
-    await state.update_data(degree=message.text)
-    user_data = await state.get_data()
-    db.save_resume_data(message.from_user.id, user_data)
-    
-    # اکنون رشته تحصیلی را از لیست انتخابی بپرس
-    await state.set_state(ResumeStates.major)
-    await message.answer(
-        "**۴. رشته تحصیلی**\n"
-        "لطفاً رشته تحصیلی خود را انتخاب کنید.\n\n"
-        "نکته: پس از انتخاب رشته، لطفاً نام دانشگاه یا مؤسسه آموزشی آخرین محل تحصیل را وارد کنید.",
-        reply_markup=get_major_keyboard()
-    )
+@dp.message(ResumeStates.degree)
+async def process_degree_invalid(message: types.Message) -> None:
+    """Handle invalid input for degree."""
+    await message.answer("لطفاً از دکمه‌های شیشه‌ای برای انتخاب مقطع تحصیلی استفاده کنید.")
 
 # --- اضافه شدن هندلر گمشده: ۴. رشته تحصیلی و دانشگاه ---
 @dp.message(ResumeStates.field_university)
@@ -1062,7 +1087,7 @@ async def handle_edit_field(message: types.Message, state: FSMContext) -> None:
 
     if selected_key == 'degree':
         await state.set_state(ResumeStates.degree)
-        await message.answer("لطفاً مقطع تحصیلی خود را انتخاب کنید.", reply_markup=create_reply_keyboard(config.KEYBOARD_DEGREE_TEXTS))
+        await message.answer("لطفاً مقطع تحصیلی خود را انتخاب کنید.", reply_markup=get_degree_keyboard())
         return
 
     if selected_key == 'major':
@@ -1755,7 +1780,10 @@ async def admin_enter_new_value(message: types.Message, state: FSMContext) -> No
     if success:
         # log admin action
         db.log_admin_action(message.from_user.id, user_id, 'update', field_name, str(old_value), str(new_value))
-        await message.answer(f"✅ فیلد **{field_name}** با موفقیت به **{new_value}** تغییر یافت.")
+        # Escape user-provided values to prevent markdown parsing errors
+        safe_field_name = markdown_decoration.quote(field_name)
+        safe_new_value = markdown_decoration.quote(new_value)
+        await message.answer(f"✅ فیلد **{safe_field_name}** با موفقیت به **{safe_new_value}** تغییر یافت.")
         # return to edit-fields menu so admin can continue editing
         await state.set_state(AdminStates.edit_select_field)
         await state.update_data(target_user_id=user_id)
