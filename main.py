@@ -109,15 +109,21 @@ def get_main_keyboard(is_admin) -> ReplyKeyboardMarkup:
         input_field_placeholder="منوی اصلی..."
     )
 
-def get_skill_keyboard() -> InlineKeyboardMarkup:
+def get_skill_keyboard(is_editing: bool = False) -> InlineKeyboardMarkup:
     # این کیبورد Inline است و نیازی به تبدیل ندارد
     kb = []
     for row in config.KEYBOARD_SKILLS[:-1]:
         kb.append([InlineKeyboardButton(text=s, callback_data=f"skill_{s}") for s in row])
     
-    kb.append([InlineKeyboardButton(text=config.KEYBOARD_SKILLS[-1][0], callback_data="skill_continue")])
+    # اگر در حالت ویرایش باشیم، دکمه "اتمام ویرایش" را نمایش می‌دهیم
+    if is_editing:
+        kb.append([InlineKeyboardButton(text="✅ اتمام ویرایش مهارت‌ها", callback_data="skill_edit_finish")])
+    else:
+        # در حالت عادی، دکمه "ادامه" نمایش داده می‌شود
+        kb.append([InlineKeyboardButton(text=config.KEYBOARD_SKILLS[-1][0], callback_data="skill_continue")])
     
     return InlineKeyboardMarkup(inline_keyboard=kb)
+
 
 def get_skill_level_keyboard(skill_name) -> InlineKeyboardMarkup:
     kb = [
@@ -527,7 +533,7 @@ async def process_phone_emergency(message: types.Message, state: FSMContext) -> 
 
 # --- لوپ مهارت‌ها (Skill Loop Handlers) ---
 
-@dp.callback_query(ResumeStates.skills_start, F.data.startswith("skill_"))
+@dp.callback_query(ResumeStates.skills_start, F.data.startswith("skill_") & ~F.data.endswith("_finish"))
 async def process_skill_selection(callback: types.CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
     # edit the originating message to indicate the selection and remove inline buttons
@@ -561,7 +567,8 @@ async def process_skill_selection(callback: types.CallbackQuery, state: FSMConte
             f"لطفاً نمونه کار خود را آپلود کنید (حداکثر **{config.MAX_FILE_SIZE_MB} مگابایت**، فرمت: PDF, DOCX, ZIP, JPG, PNG).\n"
             "**توجه**: فایل خود را به صورت سند (Document) ارسال کنید."
             ,
-            reply_markup=get_skip_worksample_keyboard()
+            reply_markup=get_skip_worksample_keyboard(),
+            parse_mode=ParseMode.MARKDOWN
         )
         return
 
@@ -651,7 +658,7 @@ async def process_skill_level_selection(callback: types.CallbackQuery, state: FS
         f"مهارت **{final_skill_name}** با سطح **{skill_level}** ثبت شد.\n"
         "**مهارت‌های ثبت‌شده تا کنون:**\n"
         f"{skills_text}",
-        reply_markup=get_skill_keyboard()
+        reply_markup=get_skill_keyboard(is_editing=data.get('is_editing', False))
     )
 
 
@@ -683,7 +690,7 @@ async def process_english_level(callback: types.CallbackQuery, state: FSMContext
         "**۱۰. مهارت‌های نرم‌افزاری**\n"
         "لطفاً مهارت‌های خود را از لیست زیر انتخاب کنید و سپس سطح خود را مشخص نمایید.\n"
         "پس از اتمام، روی **ادامه به مرحله بعد** کلیک کنید.",
-        reply_markup=get_skill_keyboard()
+        reply_markup=get_skill_keyboard() # در حالت عادی، دکمه "ادامه" نمایش داده می‌شود
     )
 
 
@@ -844,7 +851,8 @@ async def process_work_history_details(message: types.Message, state: FSMContext
         await message.answer(
             "**۱۲. جایگاه شغلی طبق توانایی شما**\n"
             "لطفاً جایگاه مدنظر خود را انتخاب کنید.",
-            reply_markup=create_reply_keyboard(config.KEYBOARD_JOB_POSITION_TEXTS)
+            reply_markup=create_reply_keyboard(config.KEYBOARD_JOB_POSITION_TEXTS),
+            parse_mode=ParseMode.MARKDOWN
         )
         return
     await message.answer("لطفاً از دکمه‌های تعیین شده استفاده کنید.")
@@ -1088,6 +1096,22 @@ async def handle_edit_field(message: types.Message, state: FSMContext) -> None:
 
     await state.update_data(edit_field_name=selected_key)
 
+    # --- منطق اختصاصی برای ویرایش مهارت‌ها ---
+    if selected_key == 'skills':
+        await state.set_state(ResumeStates.skills_start)
+        data = await state.get_data()
+        current_skills = data.get('skills', [])
+        
+        # نمایش مهارت‌های فعلی به کاربر
+        if isinstance(current_skills, list) and current_skills:
+            skills_text = "\n".join([f"- **{s['name']}**: {s['level']}" for s in current_skills])
+            await message.answer(f"**مهارت‌های فعلی شما:**\n{skills_text}\n\nبرای ویرایش، مهارت جدیدی اضافه کنید یا مهارت موجود را با سطح جدید انتخاب کنید. در پایان روی 'اتمام ویرایش مهارت‌ها' بزنید.", reply_markup=get_skill_keyboard(is_editing=True))
+        else:
+            await message.answer("شما در حال حاضر مهارتی ثبت نکرده‌اید. مهارت‌های خود را انتخاب کنید و در پایان روی 'اتمام ویرایش مهارت‌ها' بزنید.", reply_markup=get_skill_keyboard(is_editing=True))
+        return
+    # --- پایان منطق اختصاصی مهارت‌ها ---
+
+
     # Refactor: Use a dispatch dictionary to avoid long if/elif chains
     # This makes the code cleaner, more maintainable, and easier to extend.
     EDIT_DISPATCH = {
@@ -1118,6 +1142,13 @@ async def handle_edit_field(message: types.Message, state: FSMContext) -> None:
         # Fallback for fields not in the dispatch map (e.g., skills)
         await state.set_state(ResumeStates.edit_value)
         await message.answer(f"لطفاً مقدار جدید برای فیلد **{text}** را وارد کنید:", reply_markup=types.ReplyKeyboardRemove())
+
+
+@dp.callback_query(F.data == "skill_edit_finish")
+async def callback_skill_edit_finish(callback: types.CallbackQuery, state: FSMContext) -> None:
+    """هنگامی که کاربر در حالت ویرایش، دکمه اتمام ویرایش مهارت‌ها را می‌زند."""
+    await callback.answer()
+    await finish_single_edit(callback.message, state)
 
 
 @dp.message(ResumeStates.edit_value)
