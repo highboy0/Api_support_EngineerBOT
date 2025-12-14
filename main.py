@@ -196,13 +196,12 @@ def get_consent_keyboard() -> InlineKeyboardMarkup:
 def get_skip_worksample_keyboard() -> InlineKeyboardMarkup:
     """کیبورد شیشه‌ای برای رد کردن مرحله آپلود نمونه‌کار (مرحله بعد)"""
     # Provide two actions: skip the uploads or finish uploads and continue
-    kb = InlineKeyboardMarkup(inline_keyboard=[
+    return InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="مرحله بعد", callback_data="worksample_skip"),
-            InlineKeyboardButton(text="اتمام آپلود و ارسال فایل", callback_data="worksample_finish")
+            InlineKeyboardButton(text="اتمام آپلود و ادامه", callback_data="worksample_finish"),
+            InlineKeyboardButton(text="رد کردن این مرحله", callback_data="worksample_skip")
         ]
     ])
-    return kb
 
 def is_valid_phone(phone: str) -> bool:
     return re.fullmatch(r"09\d{9}", phone.strip())
@@ -755,20 +754,37 @@ async def process_work_sample(message: types.Message, state: FSMContext) -> None
         uploaded = data.get('uploaded_files', []) or []
         uploaded.append(save_path)
         await state.update_data(uploaded_files=uploaded, file_path=save_path)
+        feedback_message_id = data.get('feedback_message_id')
         await persist_state_to_db(message.from_user.id, state)
         db.log("INFO", f"User {message.from_user.id} uploaded file to: {save_path}")
 
-        # remain in the same state so user can upload more files; present finish/skip keyboard
-        await message.answer(
-            "✅ فایل با موفقیت آپلود شد. می‌توانید فایل دیگری ارسال کنید یا روی 'اتمام آپلود و ارسال فایل' بزنید.",
-            reply_markup=get_skip_worksample_keyboard()
+        # منطق جدید: ویرایش پیام قبلی یا ارسال پیام جدید
+        num_files = len(uploaded)
+        feedback_text = (
+            f"✅ **{num_files}** فایل با موفقیت آپلود شد.\n"
+            "می‌توانید فایل دیگری ارسال کنید یا روی دکمه‌های زیر بزنید."
         )
+
+        if feedback_message_id:
+            try:
+                await bot.edit_message_text(
+                    text=feedback_text,
+                    chat_id=message.chat.id,
+                    message_id=feedback_message_id,
+                    reply_markup=get_skip_worksample_keyboard()
+                )
+            except Exception: # اگر پیام قبلی حذف شده باشد
+                feedback_message_id = None # برای ارسال پیام جدید
+
+        if not feedback_message_id:
+            sent_message = await message.answer(feedback_text, reply_markup=get_skip_worksample_keyboard())
+            await state.update_data(feedback_message_id=sent_message.message_id)
+
         await state.set_state(ResumeStates.work_sample_upload)
 
     except Exception as e:
         db.log("ERROR", f"File download failed for user {message.from_user.id}: {e}")
         await message.answer("❌ خطایی در آپلود فایل رخ داد. لطفاً دوباره تلاش کنید.")
-        await state.set_state(ResumeStates.work_sample_upload)
 
 
 @dp.callback_query(F.data == "worksample_skip")
@@ -783,6 +799,7 @@ async def worksample_skip_callback(callback: types.CallbackQuery, state: FSMCont
             await callback.message.edit_reply_markup(reply_markup=None)
         except Exception:
             pass
+    await state.update_data(feedback_message_id=None) # پاک کردن آیدی پیام
     await state.set_state(ResumeStates.work_history)
     db.log("INFO", f"User {callback.from_user.id} skipped work sample upload.")
     await bot.send_message(
@@ -796,16 +813,18 @@ async def worksample_skip_callback(callback: types.CallbackQuery, state: FSMCont
 async def worksample_finish_callback(callback: types.CallbackQuery, state: FSMContext) -> None:
     """User finished uploading files and wants to continue the flow."""
     await callback.answer()
+    data = await state.get_data()
+    uploaded = data.get('uploaded_files', []) or []
     # edit source message to indicate uploads finished and remove inline buttons
     try:
-        await callback.message.edit_text(f"✅ آپلودها تکمیل شد. تعداد فایل‌ها: {len(uploaded)}")
+        await callback.message.edit_text(f"✅ آپلودها با موفقیت تکمیل شد. (تعداد: {len(uploaded)})")
     except Exception:
         try:
             await callback.message.edit_reply_markup(reply_markup=None)
         except Exception:
             pass
-    data = await state.get_data()
-    uploaded = data.get('uploaded_files', []) or []
+
+    await state.update_data(feedback_message_id=None) # پاک کردن آیدی پیام
     db.log("INFO", f"User {callback.from_user.id} finished uploads. {len(uploaded)} files saved.")
     await state.set_state(ResumeStates.work_history)
     await bot.send_message(
