@@ -1235,7 +1235,7 @@ def get_user_actions_keyboard(user_id: int, is_blocked: bool) -> ReplyKeyboardMa
     """کیبورد اقدامات ادمین روی کاربر خاص"""
     block_status = "✅ آنبلاک" if is_blocked else "🚫 بلاک"
     keyboard_rows = [
-        [KeyboardButton(text="✏️ ویرایش اطلاعات"), KeyboardButton(text="🗑️ حذف کاربر")],
+        [KeyboardButton(text="✏️ ویرایش اطلاعات"), KeyboardButton(text="🗑️ حذف کاربر"), KeyboardButton(text="📂 دریافت نمونه کار")],
         [KeyboardButton(text=block_status)],
         [KeyboardButton(text="🔙 بازگشت به جستجو")],
         [KeyboardButton(text="بازگشت به صفحه اصلی")]
@@ -1782,6 +1782,48 @@ async def admin_enter_new_value(message: types.Message, state: FSMContext) -> No
         await state.update_data(target_user_id=user_id)
         await message.answer(format_resume_data(user_data), reply_markup=get_user_actions_keyboard(user_id, is_blocked), parse_mode=ParseMode.HTML)
 
+
+@dp.message(F.text == "📂 دریافت نمونه کار", AdminStates.view_user)
+async def admin_get_work_samples(message: types.Message, state: FSMContext) -> None:
+    """هندلر برای ارسال نمونه کارهای کاربر به ادمین."""
+    if message.from_user.id not in config.ADMIN_IDS:
+        return
+
+    data = await state.get_data()
+    user_id = data.get('target_user_id')
+    if not user_id:
+        await message.answer("خطای سیستمی: آیدی کاربر یافت نشد. لطفاً دوباره جستجو کنید.", reply_markup=get_admin_main_keyboard())
+        await state.clear()
+        return
+
+    user_data = db.get_resume_data(user_id)
+    uploaded_files_json = user_data.get('uploaded_files')
+
+    file_paths = []
+    if uploaded_files_json:
+        try:
+            file_paths = json.loads(uploaded_files_json)
+        except (json.JSONDecodeError, TypeError):
+            file_paths = []
+
+    if not file_paths:
+        await message.answer("این کاربر نمونه کاری ارسال نکرده است.")
+    else:
+        await message.answer(f"درحال ارسال {len(file_paths)} فایل نمونه کار...")
+        sent_count = 0
+        for path in file_paths:
+            if os.path.exists(path):
+                try:
+                    await bot.send_document(message.from_user.id, FSInputFile(path))
+                    sent_count += 1
+                except Exception as e:
+                    await message.answer(f"خطا در ارسال فایل: `{path}`\n`{e}`")
+                    db.log("ERROR", f"Admin failed to get work sample {path} for user {user_id}: {e}")
+            else:
+                await message.answer(f"فایل در مسیر زیر یافت نشد (احتمالا حذف شده است):\n`{path}`")
+        await message.answer(f"✅ {sent_count} فایل با موفقیت ارسال شد.")
+
+    await message.answer("برای بازگشت، دکمه زیر را بزنید.", reply_markup=get_user_actions_keyboard(user_id, bool(user_data.get('is_blocked', 0))))
 
 @dp.callback_query(F.data.startswith("admin_view_"))
 async def admin_search_view_callback(callback: types.CallbackQuery, state: FSMContext) -> None:
