@@ -37,6 +37,10 @@ SUPPORT_CHAT_LINK = os.getenv("SUPPORT_CHAT_LINK") or os.getenv("SUPPORT") or f"
 # Label shown on the main keyboard for contacting support
 SUPPORT_LABEL = os.getenv("SUPPORT_LABEL") or "پشتیبانی"
 
+# Link and label for the "Mohandes Yar" channel button
+MOHANDES_YAR_CHANNEL_LABEL = os.getenv("MOHANDES_YAR_CHANNEL_LABEL") or "کانال مهندس یار"
+MOHANDES_YAR_CHANNEL_LINK = os.getenv("MOHANDES_YAR_CHANNEL_LINK") or "https://t.me/example_channel"
+
 # --- مسیرها ---
 DATABASE_NAME = "db.sqlite3"
 LOG_FILE = "logs.txt"

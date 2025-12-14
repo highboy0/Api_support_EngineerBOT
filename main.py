@@ -95,8 +95,9 @@ def get_main_keyboard(is_admin) -> ReplyKeyboardMarkup:
     # ساخت دکمه‌های اصلی: ارسال رزومه و پشتیبانی در یک ردیف، دکمه پنل ادمین در ردیف جداگانه (در صورت ادمین)
     main_btn = KeyboardButton(text=config.KEYBOARD_MAIN_TEXTS[0])
     support_btn = KeyboardButton(text=config.SUPPORT_LABEL)
+    channel_btn = KeyboardButton(text=config.MOHANDES_YAR_CHANNEL_LABEL)
 
-    keyboard_rows = [[main_btn, support_btn]]
+    keyboard_rows = [[main_btn, support_btn, channel_btn]]
 
     # اضافه کردن دکمه ادمین (Admin Panel) در ردیف بعدی
     if is_admin:
@@ -108,6 +109,7 @@ def get_main_keyboard(is_admin) -> ReplyKeyboardMarkup:
         resize_keyboard=True,
         input_field_placeholder="منوی اصلی..."
     )
+
 
 def get_skill_keyboard(is_editing: bool = False) -> InlineKeyboardMarkup:
     # این کیبورد Inline است و نیازی به تبدیل ندارد
@@ -273,6 +275,21 @@ async def support_button_handler(message: types.Message) -> None:
     except Exception as e:
         db.log("ERROR", f"Failed to send support link to {message.from_user.id}: {e}")
         await message.answer(f"ارتباط با پشتیبانی: {config.SUPPORT_CHAT_LINK}")
+
+@dp.message(F.text == config.MOHANDES_YAR_CHANNEL_LABEL)
+async def channel_button_handler(message: types.Message) -> None:
+    """When user presses the channel button, send a message with an inline URL button."""
+    try:
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="ورود به کانال", url=config.MOHANDES_YAR_CHANNEL_LINK)]
+        ])
+        await message.answer("برای عضویت در کانال مهندس یار روی دکمه زیر کلیک کنید:", reply_markup=kb)
+        db.log("INFO", f"User {message.from_user.id} requested channel link.")
+    except Exception as e:
+        db.log("ERROR", f"Failed to send channel link to {message.from_user.id}: {e}")
+        # Fallback in case the inline button fails
+        await message.answer(f"لینک کانال مهندس یار: {config.MOHANDES_YAR_CHANNEL_LINK}")
+
 
 # --- FSM هندلرهای رزومه (استفاده از توابع جدید کیبورد) ---
 
@@ -1203,16 +1220,6 @@ def create_reply_keyboard(texts: list, one_time: bool = False) -> ReplyKeyboardM
 
     return ReplyKeyboardMarkup(keyboard=keyboard_rows, resize_keyboard=True, one_time_keyboard=one_time)
 
-def get_main_keyboard(is_admin) -> ReplyKeyboardMarkup:
-    main_btn = KeyboardButton(text=config.KEYBOARD_MAIN_TEXTS[0])
-    support_btn = KeyboardButton(text=config.SUPPORT_LABEL)
-
-    keyboard_rows = [[main_btn, support_btn]]
-    if is_admin:
-        admin_button = KeyboardButton(text=config.KEYBOARD_ADMIN_TEXTS[0])
-        keyboard_rows.append([admin_button])
-    return ReplyKeyboardMarkup(keyboard=keyboard_rows, resize_keyboard=True, input_field_placeholder="منوی اصلی...")
-
 def get_admin_main_keyboard() -> ReplyKeyboardMarkup:
     """منوی اصلی پنل ادمین"""
     # toggle label based on per-admin setting if available
@@ -2038,6 +2045,3 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         db.close()
         print("Bot stopped and database connection closed.")
-
-
-    
